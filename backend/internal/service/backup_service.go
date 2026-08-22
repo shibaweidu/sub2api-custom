@@ -45,9 +45,9 @@ const (
 	backupScheduledLeaderLockKey = "backup:scheduled:leader"
 	// backupScheduledLeaderLockTTL bounds crash recovery only; the lock is
 	// released as soon as the backup finishes. It must exceed the job's
-	// worst-case runtime (the scheduled backup context is bounded at 30m) so the
+	// worst-case runtime (bounded by backupOperationTimeout) so the
 	// lock cannot expire mid-dump and let a peer start a second backup.
-	backupScheduledLeaderLockTTL = 35 * time.Minute
+	backupScheduledLeaderLockTTL = backupOperationTimeout + 5*time.Minute
 )
 
 var (

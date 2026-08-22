@@ -629,6 +629,10 @@ func TestBackupService_CreateBackup_ConcurrentBlocked(t *testing.T) {
 	require.ErrorIs(t, err, ErrBackupInProgress)
 }
 
+func TestBackupScheduledLeaderLockOutlivesOperation(t *testing.T) {
+	require.Greater(t, backupScheduledLeaderLockTTL, backupOperationTimeout)
+}
+
 // TestBackupService_RunScheduledBackup_LeaderElection verifies the scheduled
 // backup is gated by a cross-instance leader lock: a non-leader instance skips
 // the dump entirely so a clustered deployment does not run N identical backups
