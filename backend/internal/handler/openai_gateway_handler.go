@@ -174,12 +174,24 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	// Preserve the immutable API-key snapshot captured by
+	// wrapUsageRecordTaskContext while replacing the request context with the
+	// worker's bounded timeout context.
+	if snapshot, ok := service.APIKeyUsageSnapshotFromContext(parent); ok {
+		base = service.WithAPIKeyUsageSnapshot(base, snapshot)
+	}
 	return base
 }
 
 func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecordTask) service.UsageRecordTask {
 	if task == nil {
 		return nil
+	}
+	// Capture the effective API-key/group at submission time. Fallback routing
+	// mutates the request-local API key in place, and a later WS turn or request
+	// could otherwise change what an already queued usage task observes.
+	if apiKey, ok := service.APIKeyForUsageContext(parent); ok {
+		parent = service.WithAPIKeyUsageSnapshot(parent, apiKey)
 	}
 	return func(ctx context.Context) {
 		task(usageRecordContext(parent, ctx))
@@ -1547,6 +1559,13 @@ func (h *OpenAIGatewayHandler) acquireResponsesUserSlot(
 	return wrapReleaseOnDone(ctx, userReleaseFunc), true
 }
 
+func apiKeyUserConcurrencyLimit(apiKey *service.APIKey) (int64, int) {
+	if apiKey == nil || apiKey.Group == nil || apiKey.Group.ID <= 0 || apiKey.Group.UserConcurrencyLimit <= 0 {
+		return 0, 0
+	}
+	return apiKey.Group.ID, apiKey.Group.UserConcurrencyLimit
+}
+
 // openAISlotAcquireResult 是账号槽位获取的三态结果。
 type openAISlotAcquireResult int
 
@@ -1978,7 +1997,8 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 必须尽早注册，确保任何 early return 都能释放已获取的并发槽位。
 	defer releaseTurnSlots()
 
-	userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
+	groupID, groupMax := apiKeyUserConcurrencyLimit(apiKey)
+	userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyWithGroup(ctx, subject.UserID, subject.Concurrency, apiKey.ID, groupID, groupMax)
 	if err != nil {
 		reqLog.Warn("openai.websocket_user_slot_acquire_failed", zap.Error(err))
 		closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
@@ -1993,7 +2013,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if currentUserRelease != nil {
 			return true
 		}
-		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
+		userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyWithGroup(ctx, subject.UserID, subject.Concurrency, apiKey.ID, groupID, groupMax)
 		if err != nil {
 			reqLog.Warn("openai.websocket_user_slot_reacquire_failed", zap.Error(err))
 			closeOpenAIClientWS(wsConn, coderws.StatusInternalError, "failed to acquire user concurrency slot")
@@ -2346,7 +2366,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 防御式清理：避免异常路径下旧槽位覆盖导致泄漏。
 				releaseTurnSlots()
 				// 非首轮 turn 需要重新抢占并发槽位，避免长连接空闲占槽。
-				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKey(ctx, subject.UserID, subject.Concurrency, apiKey.ID)
+				userReleaseFunc, userAcquired, err := h.concurrencyHelper.TryAcquireUserSlotForAPIKeyWithGroup(ctx, subject.UserID, subject.Concurrency, apiKey.ID, groupID, groupMax)
 				if err != nil {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "failed to acquire user concurrency slot", err)
 				}
@@ -3576,7 +3596,10 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	if apiKey != nil {
 		apiKeyID = apiKey.ID
 		apiKeyName = apiKey.Name
-		groupID = apiKey.GroupID
+		if apiKey.GroupID != nil {
+			groupIDValue := *apiKey.GroupID
+			groupID = &groupIDValue
+		}
 		if apiKey.User != nil {
 			userID = apiKey.User.ID
 			userEmail = apiKey.User.Email
@@ -3623,6 +3646,10 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	if apiKey != nil {
 		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
 	}
+	// This path uses a detached goroutine instead of the usage worker pool.
+	// Capture the effective group/API-key now for the same reason the normal
+	// usage-task wrapper does: a later fallback switch must not rewrite billing.
+	usageAPIKey := service.CloneAPIKeyForUsage(apiKey)
 	opsMeta := cyberPolicyOpsErrorMeta{
 		RequestID:       requestID,
 		ClientRequestID: clientRequestID,
@@ -3671,7 +3698,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		}
 		if forwardErrored && gwSvc != nil {
 			gwSvc.RecordCyberPolicyUsageLog(ctx, service.CyberPolicyUsageInput{
-				APIKey:             apiKey,
+				APIKey:             usageAPIKey,
 				Account:            account,
 				Subscription:       subscription,
 				RequestID:          requestID,

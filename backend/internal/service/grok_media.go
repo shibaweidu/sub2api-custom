@@ -336,9 +336,13 @@ func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
 // first observes a completed video URL. Status may omit model/duration; we fall
 // back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
+	Model         string `json:"model"`
+	BillingModel  string `json:"billing_model,omitempty"`
+	UpstreamModel string `json:"upstream_model,omitempty"`
+	// BillingGroupID is the group that actually accepted the asynchronous
+	// create request. It is used to restore fallback routing on later status or
+	// content polls, after the original request context has disappeared.
+	BillingGroupID       *int64 `json:"billing_group_id,omitempty"`
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
@@ -689,7 +693,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	resp, err := doAccountHTTPUpstream(s.httpUpstream, upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -791,7 +795,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
-	statusResp, err := s.httpUpstream.Do(statusReq, proxyURL, account.ID, account.Concurrency)
+	statusResp, err := doAccountHTTPUpstream(s.httpUpstream, statusReq, proxyURL, account)
 	if err != nil {
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -850,7 +854,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		account.ApplyHeaderOverrides(contentReq.Header)
 	}
 
-	contentResp, err := s.httpUpstream.Do(contentReq, proxyURL, account.ID, account.Concurrency)
+	contentResp, err := doAccountHTTPUpstream(s.httpUpstream, contentReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
@@ -1299,7 +1303,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	})
 	if kind == "failover" {
 		retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, body)
-		return nil, &UpstreamFailoverError{
+		return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{
 			StatusCode:               resp.StatusCode,
 			ResponseBody:             body,
 			ResponseHeaders:          resp.Header.Clone(),
@@ -1308,7 +1312,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 			SameAccountRetryDelay:    retryDelay,
 			SameAccountRetryDeadline: retryDeadline,
 			SameAccountRetryMax:      retryMax,
-		}
+		})
 	}
 
 	MarkResponseCommitted(c)
