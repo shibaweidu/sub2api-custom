@@ -1,9 +1,13 @@
 package admin
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +16,193 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAccountHandlerListLiteUsesCompactDTOAndETag(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	now := time.Now().UTC()
+	groupID := int64(77)
+	adminSvc.accounts = []service.Account{{
+		ID: 501, Name: "compact-account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Credentials: map[string]any{"email": "compact@example.com", "access_token": strings.Repeat("x", 4096)},
+		Extra:       map[string]any{"privacy_mode": "training_off"}, Status: service.StatusActive,
+		Schedulable: true, Concurrency: 4, GroupIDs: []int64{groupID},
+		Groups:        []*service.Group{{ID: groupID, Name: "codex", Platform: service.PlatformOpenAI}},
+		AccountGroups: []service.AccountGroup{{AccountID: 501, GroupID: groupID, Priority: 2, Group: &service.Group{ID: groupID, Name: "codex", Platform: service.PlatformOpenAI}}},
+		CreatedAt:     now, UpdatedAt: now,
+	}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=1", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, rec.Header().Get("ETag"))
+
+	var litePayload struct {
+		Data struct {
+			Items []map[string]any `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &litePayload))
+	require.Len(t, litePayload.Data.Items, 1)
+	liteItem := litePayload.Data.Items[0]
+	require.Equal(t, float64(501), liteItem["id"])
+	require.Equal(t, []any{float64(groupID)}, liteItem["group_ids"])
+	require.Equal(t, true, liteItem["schedulable"])
+	require.NotContains(t, liteItem, "groups")
+	require.NotContains(t, liteItem, "account_groups")
+	credentials, ok := liteItem["credentials"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "compact@example.com", credentials["email"])
+	require.NotContains(t, credentials, "access_token")
+	credentialsStatus, ok := liteItem["credentials_status"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, true, credentialsStatus["has_access_token"])
+
+	// The ETag must represent the same compact body and return 304 on refresh.
+	rec304 := httptest.NewRecorder()
+	req304 := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=1", nil)
+	req304.Header.Set("If-None-Match", rec.Header().Get("ETag"))
+	router.ServeHTTP(rec304, req304)
+	require.Equal(t, http.StatusNotModified, rec304.Code)
+
+	// Omitting lite preserves the legacy full response shape.
+	recFull := httptest.NewRecorder()
+	reqFull := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20", nil)
+	router.ServeHTTP(recFull, reqFull)
+	require.Equal(t, http.StatusOK, recFull.Code)
+	var fullPayload struct {
+		Data struct {
+			Items []map[string]any `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recFull.Body.Bytes(), &fullPayload))
+	require.Contains(t, fullPayload.Data.Items[0], "groups")
+	require.Contains(t, fullPayload.Data.Items[0], "account_groups")
+}
+
+func TestAccountHandlerListLiteStaysBelowResponseBudget(t *testing.T) {
+	router, adminSvc := setupAccountListRouter()
+	now := time.Now().UTC()
+	accounts := make([]service.Account, 20)
+	for i := range accounts {
+		id := int64(600 + i)
+		groupID := int64(800 + i)
+		accounts[i] = service.Account{
+			ID: id, Name: "account-" + strconv.Itoa(i), Platform: service.PlatformOpenAI,
+			Type: service.AccountTypeOAuth, Status: service.StatusActive, Schedulable: true,
+			Concurrency: 4, GroupIDs: []int64{groupID},
+			Groups:        []*service.Group{{ID: groupID, Name: "group-" + strconv.Itoa(i), Description: strings.Repeat("description ", 20)}},
+			AccountGroups: []service.AccountGroup{{AccountID: id, GroupID: groupID, Group: &service.Group{ID: groupID, Name: "group-" + strconv.Itoa(i), Description: strings.Repeat("description ", 20)}}},
+			CreatedAt:     now, UpdatedAt: now,
+		}
+	}
+	adminSvc.accounts = accounts
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=1", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Less(t, rec.Body.Len(), 80*1024)
+
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	_, err := zw.Write(rec.Body.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.Less(t, compressed.Len(), 15*1024)
+}
+
+type accountListProxyConcurrencyCache struct {
+	service.ConcurrencyCache
+	service.AccountProxyConcurrencyCache
+	counts map[[2]int64]int
+}
+
+func (c *accountListProxyConcurrencyCache) GetAccountConcurrencyBatch(_ context.Context, accountIDs []int64) (map[int64]int, error) {
+	counts := make(map[int64]int, len(accountIDs))
+	for _, accountID := range accountIDs {
+		for pair, count := range c.counts {
+			if pair[0] == accountID {
+				counts[accountID] += count
+			}
+		}
+	}
+	return counts, nil
+}
+
+func (c *accountListProxyConcurrencyCache) GetAccountProxyConcurrency(_ context.Context, accountID, proxyID int64) (int, error) {
+	return c.counts[[2]int64{accountID, proxyID}], nil
+}
+
+func TestAccountHandlerListPreservesProxyPoolRuntimeAndETag(t *testing.T) {
+	for _, lite := range []string{"0", "1"} {
+		t.Run("lite="+lite, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			adminSvc := newStubAdminService()
+			adminSvc.accounts = []service.Account{{
+				ID: 501, Name: "proxy-pool-account", Platform: service.PlatformOpenAI,
+				Type: service.AccountTypeAPIKey, Status: service.StatusActive,
+				Concurrency: 4, Schedulable: true,
+				Extra:        map[string]any{service.ProxyConcurrencyLimitEnabledExtraKey: true},
+				ProxyPoolIDs: []int64{91, 92},
+				ProxyPool:    []*service.Proxy{{ID: 91, Name: "proxy-a"}, {ID: 92, Name: "proxy-b"}},
+			}}
+			cache := &accountListProxyConcurrencyCache{counts: map[[2]int64]int{{501, 91}: 1, {501, 92}: 2}}
+			handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, service.NewConcurrencyService(cache), nil, nil, nil, nil)
+			router.GET("/api/v1/admin/accounts", handler.List)
+			url := "/api/v1/admin/accounts?page=1&page_size=20&lite=" + lite
+
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+			var payload struct {
+				Data struct {
+					Items []map[string]any `json:"items"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+			require.Len(t, payload.Data.Items, 1)
+			item := payload.Data.Items[0]
+			require.Equal(t, true, item["proxy_concurrency_limit_enabled"])
+			require.Equal(t, []any{float64(91), float64(92)}, item["proxy_pool_ids"])
+			require.Equal(t, []any{
+				map[string]any{"proxy_id": float64(91), "proxy_name": "proxy-a", "current_concurrency": float64(1), "max_concurrency": float64(4)},
+				map[string]any{"proxy_id": float64(92), "proxy_name": "proxy-b", "current_concurrency": float64(2), "max_concurrency": float64(4)},
+			}, item["proxy_pool"])
+			require.Equal(t, float64(3), item["current_concurrency"])
+
+			etag := rec.Header().Get("ETag")
+			require.NotEmpty(t, etag)
+			req304 := httptest.NewRequest(http.MethodGet, url, nil)
+			req304.Header.Set("If-None-Match", etag)
+			rec304 := httptest.NewRecorder()
+			router.ServeHTTP(rec304, req304)
+			require.Equal(t, http.StatusNotModified, rec304.Code)
+
+			cache.counts[[2]int64{501, 91}] = 2
+			cache.counts[[2]int64{501, 92}] = 1
+			reqRefresh := httptest.NewRequest(http.MethodGet, url, nil)
+			reqRefresh.Header.Set("If-None-Match", etag)
+			recRefresh := httptest.NewRecorder()
+			router.ServeHTTP(recRefresh, reqRefresh)
+			require.Equal(t, http.StatusOK, recRefresh.Code)
+			require.NotEqual(t, etag, recRefresh.Header().Get("ETag"))
+			require.NoError(t, json.Unmarshal(recRefresh.Body.Bytes(), &payload))
+			item = payload.Data.Items[0]
+			require.Equal(t, float64(3), item["current_concurrency"])
+			pool, ok := item["proxy_pool"].([]any)
+			require.True(t, ok)
+			require.Len(t, pool, 2)
+			pool0, ok := pool[0].(map[string]any)
+			require.True(t, ok)
+			pool1, ok := pool[1].(map[string]any)
+			require.True(t, ok)
+			require.Equal(t, float64(2), pool0["current_concurrency"])
+			require.Equal(t, float64(1), pool1["current_concurrency"])
+		})
+	}
+}
 
 func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	gin.SetMode(gin.TestMode)

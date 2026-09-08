@@ -21,7 +21,6 @@
 
 ## 扩展功能
 
-- 支持账号级上游 429 自动重试：首次 429 后默认在同一账号额外重试 5 次，可在账号创建、编辑和批量编辑中配置为 `0..10`；一次用户请求内，同一账号的所有官方重试共享这份额外预算，不会重复领取。中间 429 不触发限流或冷却，预算耗尽后完整执行原有同账号重试、错误处理、冷却与切号逻辑。HTTP 请求和 WebSocket 握手均覆盖，流式响应一旦已输出有效内容则不会盲目重放。
 - 支持分组内每用户并发限制：可为每个分组单独配置并发上限，按“用户 + 分组”独立计数，并与原有用户级、账号级并发控制同时生效。
 - 支持 API Key 主分组与同平台兜底分组：每次请求一定先完整尝试主分组，仅在主分组明确无可用账号时进入兜底分组；命中兜底后，本次请求按兜底分组的倍率、高峰倍率、渠道定价和订阅额度扣费，用量记录也归属兜底分组。
 - OpenAI 账号支持独立的透支功能开关和 `CPA 指纹出口`：关闭账号开关后不会执行透支逻辑；CPA 模式为每个账号提供唯一、稳定的设备身份，同时不强制所有会话和线程共用同一身份。
@@ -40,19 +39,28 @@
 
 **[sub2api-custom 部署与运维指南](CODEX_OVERDRAFT_DEPLOYMENT_CN.md)**
 
-最短部署流程：
+最短部署流程（Linux Docker，会自动安装宿主机更新器）：
 
 ```bash
-git clone https://github.com/DeanZFC/sub2api-custom.git sub2api-custom
-cd sub2api-custom/deploy
-cp .env.example .env
-chmod 600 .env
-# 编辑 .env，至少设置 POSTGRES_PASSWORD、JWT_SECRET 和 TOTP_ENCRYPTION_KEY
-mkdir -p data postgres_data redis_data
-docker compose \
-  -f docker-compose.local.yml \
-  -f docker-compose.custom.yml \
-  up -d --build
+curl -fsSL https://raw.githubusercontent.com/DeanZFC/sub2api-custom/sub2api-custom/deploy/install-custom-docker.sh \
+  -o /tmp/install-custom-docker.sh
+sudo bash /tmp/install-custom-docker.sh
+```
+
+安装更新器后，管理员可在页面右上角版本菜单点击“立即更新”。更新器会自动备份
+PostgreSQL、快进拉取 `sub2api-custom`、重建应用镜像、仅重建 `sub2api` 容器并执行健康检查。
+更新器不会接收网页传入的命令、仓库或路径，也不会删除 PostgreSQL/Redis 数据卷。
+此功能仅适用于 Linux Docker + systemd。macOS Apple container 不会安装宿主机更新器，页面会保留手动更新提示。
+
+需要手动控制目录、端口或 Compose 项目名时，使用安装器参数，例如：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DeanZFC/sub2api-custom/sub2api-custom/deploy/install-custom-docker.sh \
+  -o /tmp/install-custom-docker.sh
+sudo bash /tmp/install-custom-docker.sh \
+  --directory /opt/sub2api-custom-28080 \
+  --port 28080 \
+  --project sub2api-custom-28080
 ```
 
 源码中的 `deploy/config.example.yaml` 只是模板。运行配置通常位于 `deploy/data/config.yaml`。透支开关为：
@@ -62,9 +70,11 @@ gateway:
   codex_quota_overdraft_enabled: true
 ```
 
-公开的 `docker-compose.custom.yml` 已通过环境变量默认开启该功能。
+公开的 `docker-compose.custom.yml` 已通过环境变量默认开启全局能力；具体账号仍需在账号新增/编辑页打开账号开关。
 
-源码镜像会把根目录的 `FORK_VERSION` 写入版本信息。管理后台检测到本项目新版本后只提示使用 `git pull` 更新源码，不会下载官方二进制覆盖扩展功能。完整更新命令见部署指南的“日常升级本 Fork”。
+源码镜像会把根目录的 `FORK_VERSION` 写入版本信息。安装宿主机更新器后，管理后台可直接拉取本项目
+源码、备份数据库、重建应用容器并进行健康检查；更新成功后还会原子替换宿主机更新器自身，后续版本可继续使用同一个按钮。
+完整安装和故障排查见部署指南的“后台页面自动更新”。
 
 ## 如何确认透支成功
 
@@ -167,12 +177,6 @@ docker logs --since 30m sub2api-custom 2>&1 | \
 </tr>
 
 <tr>
-<td width="180"><a href="https://sui-xiang.com/"><img src="assets/partners/logos/sui-xiang.jpg" alt="sui-xiang" width="150"></a></td>
-<td>感谢 随想AI网关 赞助本项目！<a href="https://sui-xiang.com/">随想AI网关</a>  是一家可靠高效的 API 中继服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，隐私，透明，极速售后。新账户注册每日签到就送 0.5 元测试额度，充值额度 1:1，无需订阅，按量付费。多线路冗余、跨区域容灾、自动故障切换,长链路 SSE 不中断。99.9% 可用性,关键调用从不掉队。
-</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.proxy4free.com/?keyword=4yjqecpc"><img src="assets/partners/logos/proxy4free.png" alt="proxy4free" width="150"></a></td>
 <td>感谢 Proxy4Free 赞助本项目！Proxy4Free 是面向开发者和 AI 应用的数据代理服务商，提供住宅代理、静态住宅代理、ISP 代理及数据中心代理等多种代理解决方案，适用于 Web Scraping、Browser Automation、AI Agent 等场景。支持全球 IP 资源、稳定连接与灵活切换，帮助开发者提升数据采集成功率，降低 IP 封禁风险。通过<a href="https://www.proxy4free.com/?keyword=4yjqecpc">此链接注册</a>即可开始体验，轻松构建更稳定、高效的自动化工作流。
 </td>
@@ -195,11 +199,6 @@ docker logs --since 30m sub2api-custom 2>&1 | \
 <tr>
 <td width="180"><a href="https://nagora.ai/"><img src="assets/partners/logos/nagora.png" alt="Nagora" width="150"></a></td>
 <td><a href="https://nagora.ai/">Nagora</a> 是专为开发者和团队打造的多模型 AI API 网关。通过一个账户和一枚 API Key，即可统一调用 26+ 款主流文本与图像模型，兼容 OpenAI、Anthropic 与 Gemini 协议，并可无缝接入 Claude Code、Codex、Gemini CLI 等开发工具。平台提供智能路由、自动故障转移、透明计费与统一账单，同时支持预算、限速、并发控制，让个人开发、团队协作和生产环境中的 AI 调用更稳定、更可控。无需改造现有应用，只需替换 Base URL 与 API Key，最快 1 分钟即可完成接入。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://www.novada.com/?sub2api/"><img src="assets/partners/logos/novada.png" alt="Novada" width="150"></a></td>
-<td>感谢 <a href="https://www.novada.com/?sub2api/">Novada</a> 赞助本项目！Novada 为构建 AI 应用与自动化工作流的开发者提供住宅代理、ISP 代理、数据中心代理与移动代理，以及 Web Unlocker 和 Scraper API。凭借全球 IP 覆盖、灵活的轮换与粘性会话以及精准的地理定位，Novada 帮助团队在 AI Agent 工作流、跨区域测试、网络调研与浏览器自动化等场景中稳定获取网络数据。立即体验 Novada，构建更稳定、更可扩展的 AI 工作流。</td>
 </tr>
 
 <tr>
@@ -235,6 +234,26 @@ docker logs --since 30m sub2api-custom 2>&1 | \
 <tr>
 <td width="180"><a href="https://www.duckip.cn/?keyword=cu7oog6y"><img src="assets/partners/logos/duckip.png" alt="DuckIP" width="150"></a></td>
 <td><a href="https://www.duckip.cn/?keyword=cu7oog6y">DuckIP</a> - 9000 万+ 全球住宅网络资源，覆盖 195+ 国家和地区，支持轮换和粘性会话，适用于公共数据采集、RAG 更新、模型评估和多区域数据工作负载。🟢住宅代理 - 8 折优惠；🟢静态住宅代理 - ¥50.00/IP 起；🟢无限住宅代理 - ¥19.8/小时 起。✅免费领取 500M 试用流量。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://go.apimart.ai/gh-sub2api"><img src="assets/partners/logos/apimart.jpg" alt="APIMart" width="150"></a></td>
+<td>感谢 APIMart 赞助了本项目！<a href="https://go.apimart.ai/gh-sub2api">APIMart</a> 是专注于 AI 图片/视频生成的低价 API 平台，GPT-Image-2 低至 $0.006/张，1 美元可生成 160+ 张图片。图片、视频一套异步 API 通吃：提交任务获取 ID，通过轮询或回调获取结果；批量生成上万张图片也不会超时，切换模型无需修改代码。按量付费、无月费，通过<a href="https://go.apimart.ai/gh-sub2api">此注册链接</a>注册即可开始使用。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.axisnow.io/"><img src="assets/partners/logos/axisnow.jpg" alt="AxisNow" width="150"></a></td>
+<td>感谢 AxisNow 赞助了本项目！<a href="https://www.axisnow.io/">AxisNow</a> 保护并加速网站与 API，兼顾中国大陆及全球的访问体验，并通过客户端 SDK，将加速与安全能力延伸至原生/移动 App — <strong>自建私有部署 CDN</strong>｜<strong>订阅式高防 CDN</strong>｜<strong>自主可控、灵活组合的 CDN 网络</strong>。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://pp.dog/register?aff=SUB2API"><img src="assets/partners/logos/ppdog.png" alt="PP.dog" width="150"></a></td>
+<td><a href="https://pp.dog/register?aff=SUB2API">PP.dog</a> 是自建账号池的源头 API 网关，专注为下游中转站与高频开发者提供 API 网关中继服务，帮您省去自建号池的一切麻烦——✅ 源头直供：自持海量账号池，无中间商赚差价；🧧 成本屠夫：综合倍率低至 0.03x，成本仅为官方的千分之3.5；🚀 极速体验：首 Token 延迟 < 1s，流畅媲美官方原生 API。<a href="https://www.pp.dog/register?aff=SUB2API">立即接入PP.dog</a></td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://colaproxy.com/?utm_source=sub2api&utm_medium=sub2api&ref=sub2api"><img src="assets/partners/logos/cola-proxy.jpg" alt="ColaProxy" width="150"></a></td>
+<td>ColaProxy 提供专为网页抓取、自动化和多账号管理打造的高质量住宅代理。免费试用，流量永不过期，价格低至 $0.3/GB，支持无限并发连接和智能 IP 轮换，带来更流畅、更稳定的代理体验。使用优惠码 COLA10 立享 9 折优惠，立即开始使用可靠的住宅代理扩展您的项目。<a href="https://colaproxy.com/?utm_source=sub2api&utm_medium=sub2api&ref=sub2api">立即开始使用 ColaProxy</a></td>
 </tr>
 
 </table>
@@ -353,9 +372,9 @@ sudo systemctl enable sub2api
 
 #### 升级
 
-官方发行版可以直接在管理后台进行二进制在线升级。本项目使用源码构建，管理后台会读取本项目分支中的 `FORK_VERSION` 检测新版本，并提示使用 `git pull` 后重新构建；不会在线替换二进制。
-
-本 Fork 的升级命令见 [日常升级本 Fork](CODEX_OVERDRAFT_DEPLOYMENT_CN.md#日常升级本-fork)。源码构建不支持页面内一键升级和在线回退，避免误装官方二进制而丢失透支功能。
+官方发行版可以直接在管理后台进行二进制在线升级。本项目使用源码构建，管理后台读取本项目分支中的
+`FORK_VERSION` 检测新版本，并由宿主机受限更新器完成拉取、构建、重建和健康检查，不会用官方二进制覆盖本 Fork。
+源码构建不提供在线二进制回退；失败时更新器会恢复更新前的源码和应用镜像。
 
 #### 常用命令
 
@@ -392,22 +411,17 @@ curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install
 # 创建部署目录
 mkdir -p sub2api-deploy && cd sub2api-deploy
 
-# 下载并运行部署准备脚本
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
-
-# 启动服务
-docker compose up -d
-
-# 查看日志
-docker compose logs -f sub2api
+# 下载并运行源码版一键部署（自动构建并安装宿主机更新器）
+curl -fsSL https://raw.githubusercontent.com/DeanZFC/sub2api-custom/sub2api-custom/deploy/install-custom-docker.sh \
+  -o /tmp/install-custom-docker.sh
+sudo bash /tmp/install-custom-docker.sh
 ```
 
 **脚本功能：**
-- 下载 `docker-compose.local.yml`（本地保存为 `docker-compose.yml`）和 `.env.example`
+- 克隆 `sub2api-custom` 源码并构建自定义镜像
 - 自动生成安全凭证（JWT_SECRET、TOTP_ENCRYPTION_KEY、POSTGRES_PASSWORD）
-- 创建 `.env` 文件并填充自动生成的密钥
-- 创建数据目录（使用本地目录，便于备份和迁移）
-- 显示生成的凭证供你记录
+- 创建本地数据目录，并安装宿主机 systemd 更新器
+- 后台页面可直接检查版本、备份数据库、构建和健康检查
 
 #### 手动部署
 
@@ -415,8 +429,8 @@ docker compose logs -f sub2api
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Wei-Shaw/sub2api.git
-cd sub2api/deploy
+git clone -b sub2api-custom https://github.com/DeanZFC/sub2api-custom.git
+cd sub2api-custom/deploy
 
 # 2. 复制环境配置文件
 cp .env.example .env

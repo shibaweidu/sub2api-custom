@@ -13,6 +13,7 @@ const messages: Record<string, string> = {
   'usage.cacheBreakdown': 'Cache Token Breakdown',
   'usage.cacheCreationTokensLabel': 'Cache Creation',
   'usage.cacheReadTokensLabel': 'Cache Read',
+  'usage.cacheHitRate': 'Cache hit rate',
   'usage.totalCost': 'Total Cost',
   'usage.accountCost': 'Cost',
   'usage.standardCost': 'Standard',
@@ -63,5 +64,29 @@ describe('UsageStatsCards', () => {
     expect(text).toContain('12')
     expect(text).toContain('Cache Read')
     expect(text).toContain('22')
+    expect(text).toContain('Cache hit rate: 16.4%')
+    expect(text).toContain('16.42%')
+  })
+
+  it('keeps the cache tooltip out of the layout while it is hidden', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: {
+        stats,
+      },
+      global: {
+        stubs: {
+          Icon: true,
+        },
+      },
+    })
+
+    const tooltip = wrapper.findAll('span').find((el) => el.classes().includes('group-hover:block'))
+
+    expect(tooltip).toBeDefined()
+    // `opacity-0` hides the tooltip visually but keeps it in the layout, so its
+    // fixed width still widens the document and causes horizontal scrolling on
+    // narrow screens. `hidden` (display: none) takes it out of the flow.
+    expect(tooltip?.classes()).toContain('hidden')
+    expect(tooltip?.classes()).not.toContain('opacity-0')
   })
 })

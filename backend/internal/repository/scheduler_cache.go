@@ -773,6 +773,10 @@ func decodeCachedAccount(val any) (*service.Account, error) {
 	if err := json.Unmarshal(payload, &account); err != nil {
 		return nil, err
 	}
+	// Older scheduler entries may contain the pool configuration only in Extra.
+	// Rebuild the typed fields on read so those entries remain usable until the
+	// next normal cache refresh.
+	account.SyncProxyPoolConfig()
 	return &account, nil
 }
 
@@ -863,6 +867,7 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 }
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
+	account.SyncProxyPoolConfig()
 	return service.Account{
 		ID:                      account.ID,
 		Name:                    account.Name,
@@ -888,6 +893,9 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		SessionWindowStatus:     account.SessionWindowStatus,
 		ParentAccountID:         account.ParentAccountID,
 		QuotaDimension:          account.QuotaDimension,
+		ProxyID:                 account.ProxyID,
+		ProxyPoolIDs:            append([]int64(nil), account.ProxyPoolIDs...),
+		ProxyPool:               append([]*service.Proxy(nil), account.ProxyPool...),
 		AccountGroups:           filterSchedulerAccountGroups(account.AccountGroups),
 		GroupIDs:                filterSchedulerGroupIDs(account.GroupIDs, account.AccountGroups),
 		Credentials:             filterSchedulerCredentials(account.Credentials),
@@ -1001,6 +1009,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_ws_force_http",
 		"openai_responses_mode",
 		"openai_responses_supported",
+		// 透传开关必须进投影：候选过滤(ListSchedulableAccounts)读的是本投影，
+		// 而 Account.IsModelSupported 靠 extra 上的这两个键短路 model_mapping 白名单。
+		// 裁掉它们，透传账号在选号阶段会退回按(常为过期的)白名单判定并被误判为
+		// model_not_supported —— 转发阶段却仍按透传工作，表现为"单独测账号能通、
+		// 走网关报 no available accounts"。
+		"openai_passthrough",
+		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"codex_5h_used_percent",
@@ -1018,6 +1033,8 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
+		service.ProxyConcurrencyLimitEnabledExtraKey,
+		service.ProxyPoolIDsExtraKey,
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {

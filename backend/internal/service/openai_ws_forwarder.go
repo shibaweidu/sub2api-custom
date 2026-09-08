@@ -255,6 +255,9 @@ type OpenAIWSIngressHooks struct {
 	InitialTurnStartedAt time.Time
 	// MaxReasoningEffort limits explicit reasoning effort values for this WS session.
 	MaxReasoningEffort string
+	// MaxReasoningEffortOverLimit is the access control when an explicit effort
+	// exceeds the ceiling: downgrade (default) or deny.
+	MaxReasoningEffortOverLimit string
 	// ReasoningEffortMappings rewrites explicit effort values for this WS session.
 	ReasoningEffortMappings []ReasoningEffortMapping
 	TurnStarted             func(turn int, startedAt time.Time)
@@ -429,7 +432,7 @@ func (s *OpenAIGatewayService) openAIWSDialTimeout() time.Duration {
 
 func (s *OpenAIGatewayService) openAIWSAcquireTimeout(account *Account) time.Duration {
 	// Acquire 覆盖“连接复用命中/排队/新建连接”三个阶段。
-	// 账号启用 429 重试时，总预算还需要覆盖所有握手与 Retry-After 等待。
+	// 账号级透明 429 重试已关闭，超时只基于单次握手预算。
 	dial := s.openAIWSDialTimeout()
 	if dial <= 0 {
 		dial = 10 * time.Second

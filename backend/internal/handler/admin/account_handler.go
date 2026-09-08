@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -64,6 +65,7 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	cfg                     *config.Config
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -112,46 +114,48 @@ func NewAccountHandler(
 
 // CreateAccountRequest represents create account request
 type CreateAccountRequest struct {
-	Name                    string         `json:"name" binding:"required"`
-	Notes                   *string        `json:"notes"`
-	Platform                string         `json:"platform" binding:"required"`
-	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account"`
-	Credentials             map[string]any `json:"credentials" binding:"required"`
-	Extra                   map[string]any `json:"extra"`
-	ProxyID                 *int64         `json:"proxy_id"`
-	Concurrency             int            `json:"concurrency"`
-	RateLimit429RetryCount  *int           `json:"rate_limit_429_retry_count"`
-	Priority                int            `json:"priority"`
-	RateMultiplier          *float64       `json:"rate_multiplier"`
-	LoadFactor              *int           `json:"load_factor"`
-	GroupIDs                []int64        `json:"group_ids"`
-	ExpiresAt               *int64         `json:"expires_at"`
-	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
-	ProbeEnabled            *bool          `json:"upstream_billing_probe_enabled"`
-	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
+	Name                         string         `json:"name" binding:"required"`
+	Notes                        *string        `json:"notes"`
+	Platform                     string         `json:"platform" binding:"required"`
+	Type                         string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Credentials                  map[string]any `json:"credentials" binding:"required"`
+	Extra                        map[string]any `json:"extra"`
+	ProxyID                      *int64         `json:"proxy_id"`
+	ProxyConcurrencyLimitEnabled *bool          `json:"proxy_concurrency_limit_enabled"`
+	ProxyPoolIDs                 []int64        `json:"proxy_pool_ids"`
+	Concurrency                  int            `json:"concurrency"`
+	Priority                     int            `json:"priority"`
+	RateMultiplier               *float64       `json:"rate_multiplier"`
+	LoadFactor                   *int           `json:"load_factor"`
+	GroupIDs                     []int64        `json:"group_ids"`
+	ExpiresAt                    *int64         `json:"expires_at"`
+	AutoPauseOnExpired           *bool          `json:"auto_pause_on_expired"`
+	ProbeEnabled                 *bool          `json:"upstream_billing_probe_enabled"`
+	ConfirmMixedChannelRisk      *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
 // UpdateAccountRequest represents update account request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateAccountRequest struct {
-	Name                    string         `json:"name"`
-	Notes                   *string        `json:"notes"`
-	Type                    string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
-	Credentials             map[string]any `json:"credentials"`
-	Extra                   map[string]any `json:"extra"`
-	ProxyID                 *int64         `json:"proxy_id"`
-	Concurrency             *int           `json:"concurrency"`
-	RateLimit429RetryCount  *int           `json:"rate_limit_429_retry_count"`
-	Priority                *int           `json:"priority"`
-	RateMultiplier          *float64       `json:"rate_multiplier"`
-	LoadFactor              *int           `json:"load_factor"`
-	Status                  string         `json:"status" binding:"omitempty,oneof=active inactive error"`
-	GroupIDs                *[]int64       `json:"group_ids"`
-	ExpiresAt               *int64         `json:"expires_at"`
-	AutoPauseOnExpired      *bool          `json:"auto_pause_on_expired"`
-	ProbeEnabled            *bool          `json:"upstream_billing_probe_enabled"`
-	RateSyncEnabled         *bool          `json:"upstream_billing_rate_sync_enabled"`
-	ConfirmMixedChannelRisk *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
+	Name                         string         `json:"name"`
+	Notes                        *string        `json:"notes"`
+	Type                         string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Credentials                  map[string]any `json:"credentials"`
+	Extra                        map[string]any `json:"extra"`
+	ProxyID                      *int64         `json:"proxy_id"`
+	ProxyConcurrencyLimitEnabled *bool          `json:"proxy_concurrency_limit_enabled"`
+	ProxyPoolIDs                 *[]int64       `json:"proxy_pool_ids"`
+	Concurrency                  *int           `json:"concurrency"`
+	Priority                     *int           `json:"priority"`
+	RateMultiplier               *float64       `json:"rate_multiplier"`
+	LoadFactor                   *int           `json:"load_factor"`
+	Status                       string         `json:"status" binding:"omitempty,oneof=active inactive error"`
+	GroupIDs                     *[]int64       `json:"group_ids"`
+	ExpiresAt                    *int64         `json:"expires_at"`
+	AutoPauseOnExpired           *bool          `json:"auto_pause_on_expired"`
+	ProbeEnabled                 *bool          `json:"upstream_billing_probe_enabled"`
+	RateSyncEnabled              *bool          `json:"upstream_billing_rate_sync_enabled"`
+	ConfirmMixedChannelRisk      *bool          `json:"confirm_mixed_channel_risk"` // 用户确认混合渠道风险
 }
 
 // BulkUpdateAccountsRequest represents the payload for bulk editing accounts
@@ -161,7 +165,6 @@ type BulkUpdateAccountsRequest struct {
 	Name                    string                    `json:"name"`
 	ProxyID                 *int64                    `json:"proxy_id"`
 	Concurrency             *int                      `json:"concurrency"`
-	RateLimit429RetryCount  *int                      `json:"rate_limit_429_retry_count"`
 	Priority                *int                      `json:"priority"`
 	RateMultiplier          *float64                  `json:"rate_multiplier"`
 	LoadFactor              *int                      `json:"load_factor"`
@@ -193,6 +196,7 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
+	simpleMode         bool                         `json:"-"`
 	CurrentConcurrency int                          `json:"current_concurrency"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
 	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
@@ -200,6 +204,123 @@ type AccountWithConcurrency struct {
 	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
 	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
 	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
+}
+
+// AccountListItemWithConcurrency is the compact account-list envelope used
+// for lite=1. It embeds dto.AccountListItem instead of the full dto.Account,
+// so groups/account_groups never appear in the list payload.
+type AccountListItemWithConcurrency struct {
+	*dto.AccountListItem
+	CurrentConcurrency int                          `json:"current_concurrency"`
+	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
+	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
+	CurrentWindowCost  *float64                     `json:"current_window_cost,omitempty"`
+	ActiveSessions     *int                         `json:"active_sessions,omitempty"`
+	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
+}
+
+type simpleModeGroupReference struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform"`
+	Status   string `json:"status"`
+}
+
+type simpleModeAccountGroupReference struct {
+	AccountID int64                     `json:"account_id"`
+	GroupID   int64                     `json:"group_id"`
+	Priority  int                       `json:"priority"`
+	CreatedAt time.Time                 `json:"created_at"`
+	Group     *simpleModeGroupReference `json:"group,omitempty"`
+}
+
+func simpleModeGroupReferenceFromDTO(group *dto.Group) *simpleModeGroupReference {
+	if group == nil {
+		return nil
+	}
+	return &simpleModeGroupReference{ID: group.ID, Name: group.Name, Platform: group.Platform, Status: group.Status}
+}
+
+func simpleModeCompositeGroupIDs(account *dto.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func filterSimpleModeGroupIDs(groupIDs []int64, hidden map[int64]struct{}) []int64 {
+	visible := make([]int64, 0, len(groupIDs))
+	for _, groupID := range groupIDs {
+		if _, ok := hidden[groupID]; !ok {
+			visible = append(visible, groupID)
+		}
+	}
+	return visible
+}
+
+func simpleModeCompositeServiceGroupIDs(account *service.Account) map[int64]struct{} {
+	hidden := make(map[int64]struct{})
+	if account == nil {
+		return hidden
+	}
+	for _, group := range account.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			hidden[group.ID] = struct{}{}
+		}
+	}
+	for _, accountGroup := range account.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			hidden[accountGroup.GroupID] = struct{}{}
+		}
+	}
+	return hidden
+}
+
+func (a AccountWithConcurrency) MarshalJSON() ([]byte, error) {
+	type alias AccountWithConcurrency
+	if !a.simpleMode || a.Account == nil {
+		return json.Marshal(alias(a))
+	}
+	groups := make([]simpleModeGroupReference, 0, len(a.Groups))
+	compositeIDs := simpleModeCompositeGroupIDs(a.Account)
+	for _, group := range a.Groups {
+		if group != nil && group.Platform == service.PlatformComposite {
+			continue
+		}
+		if ref := simpleModeGroupReferenceFromDTO(group); ref != nil {
+			groups = append(groups, *ref)
+		}
+	}
+	accountGroups := make([]simpleModeAccountGroupReference, 0, len(a.AccountGroups))
+	for _, accountGroup := range a.AccountGroups {
+		if accountGroup.Group != nil && accountGroup.Group.Platform == service.PlatformComposite {
+			continue
+		}
+		if _, hidden := compositeIDs[accountGroup.GroupID]; hidden {
+			continue
+		}
+		accountGroups = append(accountGroups, simpleModeAccountGroupReference{
+			AccountID: accountGroup.AccountID, GroupID: accountGroup.GroupID, Priority: accountGroup.Priority,
+			CreatedAt: accountGroup.CreatedAt, Group: simpleModeGroupReferenceFromDTO(accountGroup.Group),
+		})
+	}
+	return json.Marshal(struct {
+		alias
+		GroupIDs      []int64                           `json:"group_ids,omitempty"`
+		Groups        []simpleModeGroupReference        `json:"groups"`
+		AccountGroups []simpleModeAccountGroupReference `json:"account_groups"`
+	}{alias: alias(a), GroupIDs: filterSimpleModeGroupIDs(a.GroupIDs, compositeIDs), Groups: groups, AccountGroups: accountGroups})
 }
 
 type AccountSchedulerScore struct {
@@ -226,9 +347,25 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 	return out
 }
 
+func (h *AccountHandler) accountListResponseFromService(account *service.Account) *dto.Account {
+	out := dto.AccountFromServiceShallow(account)
+	if out != nil && account != nil {
+		out.Proxy = dto.ProxyFromService(account.Proxy)
+	}
+	if h != nil && h.ollamaCloudUsage != nil && out != nil {
+		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
+	}
+	return out
+}
+
+func (h *AccountHandler) isSimpleMode() bool {
+	return h != nil && h.cfg != nil && h.cfg.RunMode == config.RunModeSimple
+}
+
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
+		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
 	}
 	if account == nil {
@@ -238,6 +375,14 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	if h.concurrencyService != nil {
 		if counts, err := h.concurrencyService.GetAccountConcurrencyBatch(ctx, []int64{account.ID}); err == nil {
 			item.CurrentConcurrency = counts[account.ID]
+		}
+		if item.Account != nil && item.ProxyConcurrencyLimitEnabled {
+			for i := range item.ProxyPool {
+				current, err := h.concurrencyService.GetAccountProxyConcurrency(ctx, account.ID, item.ProxyPool[i].ProxyID)
+				if err == nil {
+					item.ProxyPool[i].CurrentConcurrency = current
+				}
+			}
 		}
 	}
 
@@ -653,11 +798,26 @@ func (h *AccountHandler) List(c *gin.Context) {
 	result := make([]AccountWithConcurrency, len(accounts))
 	for i := range accounts {
 		acc := &accounts[i]
+		accountResponse := h.accountResponseFromService(acc)
+		if lite {
+			accountResponse = h.accountListResponseFromService(acc)
+			if h.isSimpleMode() {
+				accountResponse.GroupIDs = filterSimpleModeGroupIDs(accountResponse.GroupIDs, simpleModeCompositeServiceGroupIDs(acc))
+			}
+		}
 		item := AccountWithConcurrency{
-			Account:            h.accountResponseFromService(acc),
+			Account:            accountResponse,
+			simpleMode:         h.isSimpleMode(),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
+		}
+		if item.Account != nil && item.ProxyConcurrencyLimitEnabled && h.concurrencyService != nil {
+			for j := range item.ProxyPool {
+				if current, err := h.concurrencyService.GetAccountProxyConcurrency(c.Request.Context(), acc.ID, item.ProxyPool[j].ProxyID); err == nil {
+					item.ProxyPool[j].CurrentConcurrency = current
+				}
+			}
 		}
 
 		// 添加窗口费用（仅当启用时）
@@ -686,7 +846,34 @@ func (h *AccountHandler) List(c *gin.Context) {
 
 	h.enrichShadowParents(c.Request.Context(), result)
 
-	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, lite)
+	if lite {
+		compact := make([]AccountListItemWithConcurrency, len(result))
+		for i := range result {
+			item := result[i]
+			compact[i] = AccountListItemWithConcurrency{
+				AccountListItem:    dto.AccountListItemFromAccount(item.Account),
+				CurrentConcurrency: item.CurrentConcurrency,
+				SchedulerScore:     item.SchedulerScore,
+				SchedulerScores:    item.SchedulerScores,
+				CurrentWindowCost:  item.CurrentWindowCost,
+				ActiveSessions:     item.ActiveSessions,
+				CurrentRPM:         item.CurrentRPM,
+			}
+		}
+		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, true)
+		if etag != "" {
+			c.Header("ETag", etag)
+			c.Header("Vary", "If-None-Match")
+			if ifNoneMatchMatched(c.GetHeader("If-None-Match"), etag) {
+				c.Status(http.StatusNotModified)
+				return
+			}
+		}
+		response.Paginated(c, compact, total, page, pageSize)
+		return
+	}
+
+	etag := buildAccountsListETag(result, total, page, pageSize, platform, accountType, status, search, false)
 	if etag != "" {
 		c.Header("ETag", etag)
 		c.Header("Vary", "If-None-Match")
@@ -699,23 +886,23 @@ func (h *AccountHandler) List(c *gin.Context) {
 	response.Paginated(c, result, total, page, pageSize)
 }
 
-func buildAccountsListETag(
-	items []AccountWithConcurrency,
+func buildAccountsListETag[T any](
+	items []T,
 	total int64,
 	page, pageSize int,
 	platform, accountType, status, search string,
 	lite bool,
 ) string {
 	payload := struct {
-		Total       int64                    `json:"total"`
-		Page        int                      `json:"page"`
-		PageSize    int                      `json:"page_size"`
-		Platform    string                   `json:"platform"`
-		AccountType string                   `json:"type"`
-		Status      string                   `json:"status"`
-		Search      string                   `json:"search"`
-		Lite        bool                     `json:"lite"`
-		Items       []AccountWithConcurrency `json:"items"`
+		Total       int64  `json:"total"`
+		Page        int    `json:"page"`
+		PageSize    int    `json:"page_size"`
+		Platform    string `json:"platform"`
+		AccountType string `json:"type"`
+		Status      string `json:"status"`
+		Search      string `json:"search"`
+		Lite        bool   `json:"lite"`
+		Items       []T    `json:"items"`
 	}{
 		Total:       total,
 		Page:        page,
@@ -838,14 +1025,12 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	if req.RateLimit429RetryCount != nil {
-		if err := service.ValidateRateLimit429RetryCount(*req.RateLimit429RetryCount); err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
-	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -856,23 +1041,24 @@ func (h *AccountHandler) Create(c *gin.Context) {
 
 	result, err := executeAdminIdempotent(c, "admin.accounts.create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		account, execErr := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
-			Name:                   req.Name,
-			Notes:                  req.Notes,
-			Platform:               req.Platform,
-			Type:                   req.Type,
-			Credentials:            req.Credentials,
-			Extra:                  req.Extra,
-			ProxyID:                req.ProxyID,
-			Concurrency:            req.Concurrency,
-			RateLimit429RetryCount: req.RateLimit429RetryCount,
-			Priority:               req.Priority,
-			RateMultiplier:         req.RateMultiplier,
-			LoadFactor:             req.LoadFactor,
-			GroupIDs:               req.GroupIDs,
-			ExpiresAt:              req.ExpiresAt,
-			AutoPauseOnExpired:     req.AutoPauseOnExpired,
-			ProbeEnabled:           req.ProbeEnabled,
-			SkipMixedChannelCheck:  skipCheck,
+			Name:                         req.Name,
+			Notes:                        req.Notes,
+			Platform:                     req.Platform,
+			Type:                         req.Type,
+			Credentials:                  req.Credentials,
+			Extra:                        req.Extra,
+			ProxyID:                      req.ProxyID,
+			ProxyConcurrencyLimitEnabled: req.ProxyConcurrencyLimitEnabled,
+			ProxyPoolIDs:                 req.ProxyPoolIDs,
+			Concurrency:                  req.Concurrency,
+			Priority:                     req.Priority,
+			RateMultiplier:               req.RateMultiplier,
+			LoadFactor:                   req.LoadFactor,
+			GroupIDs:                     req.GroupIDs,
+			ExpiresAt:                    req.ExpiresAt,
+			AutoPauseOnExpired:           req.AutoPauseOnExpired,
+			ProbeEnabled:                 req.ProbeEnabled,
+			SkipMixedChannelCheck:        skipCheck,
 		})
 		if execErr != nil {
 			return nil, execErr
@@ -978,37 +1164,36 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	if req.RateLimit429RetryCount != nil {
-		if err := service.ValidateRateLimit429RetryCount(*req.RateLimit429RetryCount); err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
-	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
 	account, err := h.adminService.UpdateAccount(c.Request.Context(), accountID, &service.UpdateAccountInput{
-		Name:                   req.Name,
-		Notes:                  req.Notes,
-		Type:                   req.Type,
-		Credentials:            req.Credentials,
-		Extra:                  req.Extra,
-		ProxyID:                req.ProxyID,
-		Concurrency:            req.Concurrency, // 指针类型，nil 表示未提供
-		RateLimit429RetryCount: req.RateLimit429RetryCount,
-		Priority:               req.Priority, // 指针类型，nil 表示未提供
-		RateMultiplier:         req.RateMultiplier,
-		LoadFactor:             req.LoadFactor,
-		Status:                 req.Status,
-		GroupIDs:               req.GroupIDs,
-		ExpiresAt:              req.ExpiresAt,
-		AutoPauseOnExpired:     req.AutoPauseOnExpired,
-		ProbeEnabled:           req.ProbeEnabled,
-		RateSyncEnabled:        req.RateSyncEnabled,
-		SkipMixedChannelCheck:  skipCheck,
+		Name:                         req.Name,
+		Notes:                        req.Notes,
+		Type:                         req.Type,
+		Credentials:                  req.Credentials,
+		Extra:                        req.Extra,
+		ProxyID:                      req.ProxyID,
+		ProxyConcurrencyLimitEnabled: req.ProxyConcurrencyLimitEnabled,
+		ProxyPoolIDs:                 req.ProxyPoolIDs,
+		Concurrency:                  req.Concurrency, // 指针类型，nil 表示未提供
+		Priority:                     req.Priority,    // 指针类型，nil 表示未提供
+		RateMultiplier:               req.RateMultiplier,
+		LoadFactor:                   req.LoadFactor,
+		Status:                       req.Status,
+		GroupIDs:                     req.GroupIDs,
+		ExpiresAt:                    req.ExpiresAt,
+		AutoPauseOnExpired:           req.AutoPauseOnExpired,
+		ProbeEnabled:                 req.ProbeEnabled,
+		RateSyncEnabled:              req.RateSyncEnabled,
+		SkipMixedChannelCheck:        skipCheck,
 	})
 	if err != nil {
 		// 检查是否为混合渠道错误
@@ -1438,6 +1623,10 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 	if err := service.ValidateOpenAILongContextBillingExtra(existing.Platform, req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -1892,6 +2081,14 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 			return
 		}
 	}
+	groupIDs := make([]int64, 0)
+	for _, item := range req.Accounts {
+		groupIDs = append(groupIDs, item.GroupIDs...)
+	}
+	if err := h.adminService.ValidateAccountGroupBindings(c.Request.Context(), groupIDs); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	executeAdminIdempotentJSON(c, "admin.accounts.batch_create", req, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
 		success := 0
@@ -1911,39 +2108,35 @@ func (h *AccountHandler) BatchCreate(c *gin.Context) {
 				})
 				continue
 			}
-			if item.RateLimit429RetryCount != nil {
-				if err := service.ValidateRateLimit429RetryCount(*item.RateLimit429RetryCount); err != nil {
-					failed++
-					results = append(results, gin.H{
-						"name":    item.Name,
-						"success": false,
-						"error":   err.Error(),
-					})
-					continue
-				}
-			}
-
 			// base_rpm 输入校验：负值归零，超过 10000 截断
 			sanitizeExtraBaseRPM(item.Extra)
+			if err := service.ValidateUpstreamRequestIDHeaderExtra(item.Extra); err != nil {
+				failed++
+				results = append(results, gin.H{
+					"name":    item.Name,
+					"success": false,
+					"error":   err.Error(),
+				})
+				continue
+			}
 
 			skipCheck := item.ConfirmMixedChannelRisk != nil && *item.ConfirmMixedChannelRisk
 
 			account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
-				Name:                   item.Name,
-				Notes:                  item.Notes,
-				Platform:               item.Platform,
-				Type:                   item.Type,
-				Credentials:            item.Credentials,
-				Extra:                  item.Extra,
-				ProxyID:                item.ProxyID,
-				Concurrency:            item.Concurrency,
-				RateLimit429RetryCount: item.RateLimit429RetryCount,
-				Priority:               item.Priority,
-				RateMultiplier:         item.RateMultiplier,
-				GroupIDs:               item.GroupIDs,
-				ExpiresAt:              item.ExpiresAt,
-				AutoPauseOnExpired:     item.AutoPauseOnExpired,
-				SkipMixedChannelCheck:  skipCheck,
+				Name:                  item.Name,
+				Notes:                 item.Notes,
+				Platform:              item.Platform,
+				Type:                  item.Type,
+				Credentials:           item.Credentials,
+				Extra:                 item.Extra,
+				ProxyID:               item.ProxyID,
+				Concurrency:           item.Concurrency,
+				Priority:              item.Priority,
+				RateMultiplier:        item.RateMultiplier,
+				GroupIDs:              item.GroupIDs,
+				ExpiresAt:             item.ExpiresAt,
+				AutoPauseOnExpired:    item.AutoPauseOnExpired,
+				SkipMixedChannelCheck: skipCheck,
 			})
 			if err != nil {
 				failed++
@@ -2114,18 +2307,16 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
 	}
-	if req.RateLimit429RetryCount != nil {
-		if err := service.ValidateRateLimit429RetryCount(*req.RateLimit429RetryCount); err != nil {
-			response.BadRequest(c, err.Error())
-			return
-		}
-	}
 	if len(req.AccountIDs) == 0 && req.Filters == nil {
 		response.BadRequest(c, "account_ids or filters is required")
 		return
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)
+	if err := service.ValidateUpstreamRequestIDHeaderExtra(req.Extra); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
@@ -2133,7 +2324,6 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	hasUpdates := req.Name != "" ||
 		req.ProxyID != nil ||
 		req.Concurrency != nil ||
-		req.RateLimit429RetryCount != nil ||
 		req.Priority != nil ||
 		req.RateMultiplier != nil ||
 		req.LoadFactor != nil ||
@@ -2150,22 +2340,21 @@ func (h *AccountHandler) BulkUpdate(c *gin.Context) {
 	}
 
 	result, err := h.adminService.BulkUpdateAccounts(c.Request.Context(), &service.BulkUpdateAccountsInput{
-		AccountIDs:             req.AccountIDs,
-		Filters:                toServiceBulkUpdateAccountFilters(req.Filters),
-		Name:                   req.Name,
-		ProxyID:                req.ProxyID,
-		Concurrency:            req.Concurrency,
-		RateLimit429RetryCount: req.RateLimit429RetryCount,
-		Priority:               req.Priority,
-		RateMultiplier:         req.RateMultiplier,
-		LoadFactor:             req.LoadFactor,
-		Status:                 req.Status,
-		Schedulable:            req.Schedulable,
-		GroupIDs:               req.GroupIDs,
-		Credentials:            req.Credentials,
-		Extra:                  req.Extra,
-		ProbeEnabled:           req.ProbeEnabled,
-		SkipMixedChannelCheck:  skipCheck,
+		AccountIDs:            req.AccountIDs,
+		Filters:               toServiceBulkUpdateAccountFilters(req.Filters),
+		Name:                  req.Name,
+		ProxyID:               req.ProxyID,
+		Concurrency:           req.Concurrency,
+		Priority:              req.Priority,
+		RateMultiplier:        req.RateMultiplier,
+		LoadFactor:            req.LoadFactor,
+		Status:                req.Status,
+		Schedulable:           req.Schedulable,
+		GroupIDs:              req.GroupIDs,
+		Credentials:           req.Credentials,
+		Extra:                 req.Extra,
+		ProbeEnabled:          req.ProbeEnabled,
+		SkipMixedChannelCheck: skipCheck,
 	})
 	if err != nil {
 		var mixedErr *service.MixedChannelError
@@ -2613,6 +2802,14 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
+		// Prefer the shared, account-keyed upstream catalog. If discovery fails,
+		// retain the legacy local catalog below so the test dialog remains usable.
+		if h.accountTestService != nil {
+			if models, fetchErr := h.accountTestService.FetchOpenAIAccountModels(c.Request.Context(), account); fetchErr == nil {
+				response.Success(c, models)
+				return
+			}
+		}
 		// OpenAI 自动透传会绕过常规模型改写，测试/模型列表也应回落到默认模型集。
 		if account.IsOpenAIPassthroughEnabled() {
 			response.Success(c, openai.DefaultModels)
@@ -2811,13 +3008,15 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), account)
+	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), account)
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {
 			case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
 				response.BadRequest(c, syncErr.SafeMessage())
+			case service.UpstreamModelSyncErrorInternal:
+				response.InternalError(c, syncErr.SafeMessage())
 			default:
 				slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
@@ -2830,29 +3029,35 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, gin.H{"models": models})
+	response.Success(c, catalog)
 }
 
 // SyncUpstreamModelsPreview handles syncing live supported models using provided credentials (no account ID needed).
 // POST /api/v1/admin/accounts/models/sync-upstream-preview
 func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 	var req struct {
-		Platform string `json:"platform" binding:"required"`
-		Type     string `json:"type" binding:"required"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key" binding:"required"`
+		Platform     string            `json:"platform" binding:"required"`
+		Type         string            `json:"type" binding:"required"`
+		BaseURL      string            `json:"base_url"`
+		APIKey       string            `json:"api_key" binding:"required"`
+		ModelMapping map[string]string `json:"model_mapping"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
+	}
+	modelMapping := make(map[string]any, len(req.ModelMapping))
+	for sourceModel, upstreamModel := range req.ModelMapping {
+		modelMapping[sourceModel] = upstreamModel
 	}
 
 	tempAccount := &service.Account{
 		Platform: req.Platform,
 		Type:     req.Type,
 		Credentials: map[string]any{
-			"api_key":  req.APIKey,
-			"base_url": req.BaseURL,
+			"api_key":       req.APIKey,
+			"base_url":      req.BaseURL,
+			"model_mapping": modelMapping,
 		},
 	}
 
@@ -2861,13 +3066,15 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 		return
 	}
 
-	models, err := h.accountTestService.FetchUpstreamSupportedModels(c.Request.Context(), tempAccount)
+	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), tempAccount)
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
 			switch syncErr.Kind {
 			case service.UpstreamModelSyncErrorConfiguration, service.UpstreamModelSyncErrorUnsupported:
 				response.BadRequest(c, syncErr.SafeMessage())
+			case service.UpstreamModelSyncErrorInternal:
+				response.InternalError(c, syncErr.SafeMessage())
 			default:
 				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
@@ -2880,7 +3087,7 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, gin.H{"models": models})
+	response.Success(c, catalog)
 }
 
 // SetPrivacy handles setting privacy for a single OpenAI/Antigravity OAuth account

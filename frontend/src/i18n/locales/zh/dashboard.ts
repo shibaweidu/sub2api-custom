@@ -106,7 +106,7 @@ export default {
     fallbackGroupShortLabel: '兜底',
     selectFallbackGroup: '选择兜底',
     noFallbackGroup: '不设置兜底分组',
-    fallbackGroupHint: '仅当主分组没有可用账号时使用；每次请求始终先尝试主分组，命中兜底后按兜底分组计费并归属用量。',
+    fallbackGroupHint: '仅当主分组没有可用账号时使用；每次请求始终先尝试主分组。计费、额度和并发仍归属主分组。',
     fallbackGroupInvalid: '兜底分组必须与主分组不同且属于同一平台',
     statusLabel: '状态',
     selectStatus: '选择状态',
@@ -202,6 +202,38 @@ export default {
         codexNoteWindows:
           '设置 $env:SUB2API_API_KEY，将 config.toml 保存到 %USERPROFILE%\\.codex。优先 env_key，勿提交密钥。'
       },
+      deepseek: {
+        description: '通过当前 DeepSeek 分组配置 Claude Code、Codex 或 OpenCode。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 DeepSeek 分组发送请求。',
+        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      minimax: {
+        description: '通过当前 MiniMax 分组配置 Claude Code、Codex 或 OpenCode。',
+        codexDescription: '使用 API Key 配置 Codex，并通过当前 MiniMax 分组发送请求。',
+        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      composite: {
+        description: '通过当前 Composite 路由分组配置受支持的客户端。',
+        codexDescription: '使用 API Key 和当前 Composite 分组的完整模型目录配置 Codex。',
+        codexConfigTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        codexNote: '启动 Codex 前先导出 SUB2API_API_KEY；分组会根据目录中选中的模型路由请求。'
+      },
+      routedCodex: {
+        description: '使用当前路由分组的完整模型目录配置 Codex。',
+        configTomlHint: '下载下方模型目录，将两个文件保存到 Codex 配置目录后重启 Codex。',
+        note: '启动 Codex 前先导出 SUB2API_API_KEY。下载的目录只包含模型元数据，不包含 API Key。'
+      },
+      codexModelCatalog: {
+        title: 'Codex 模型目录',
+        description: '使用当前 API Key 获取目录，并保存到 config.toml 引用的路径。',
+        fetch: '获取目录',
+        retry: '重试',
+        download: '下载目录',
+        modelsCount: '已获取 {count} 个模型',
+        errorDescription: '无法使用当前 API Key 获取模型目录。'
+      },
       opencode: {
         title: 'OpenCode 配置示例',
         subtitle: 'opencode.json',
@@ -277,6 +309,13 @@ export default {
 
   // Usage
   usage: {
+    overdraftActive: '额度透支中',
+    overdraftProbeFailed: '额度探测失败',
+    overdraftProbeInconclusive: '额度探测结果不确定',
+    overdraftProbePending: '额度探测中',
+    overdraftRecoverAt: '预计恢复：{time}',
+    overdraftRecovered: '额度已恢复',
+    overdraftTestedAt: '探测时间：{time}',
     title: '使用记录',
     description: '查看和分析您的 API 使用历史',
     costDetails: '费用明细',
@@ -297,13 +336,6 @@ export default {
     accountCost: '成本',
     userBilled: '用户扣费',
     accountBilled: '账号计费',
-    overdraftActive: '透支中',
-    overdraftRecoverAt: '预计恢复',
-    overdraftTestedAt: '探测时间',
-    overdraftProbePending: '透支探测中',
-    overdraftProbeFailed: '已确认限额',
-    overdraftProbeInconclusive: '探测无法确认',
-    overdraftRecovered: '额度已恢复',
     resetNow: '现在',
     resetPending: '待刷新',
     accountMultiplier: '账号倍率',
@@ -331,6 +363,7 @@ export default {
 	  modelVariant: '疑似版本变体',
 	  modelMismatch: '模型不一致',
     reasoningEffort: '推理强度',
+    requestedReasoningEffort: '请求推理强度',
     endpoint: '端点',
     endpointDistribution: '端点分布',
     inbound: '入站',
@@ -351,6 +384,10 @@ export default {
     ws: 'WS',
     stream: '流式',
     sync: '同步',
+    nativeCompactionV2: '压缩',
+    compactionFilter: '请求类别',
+    allCompactionTypes: '全部请求',
+    compactionOnly: '仅原生压缩',
     cyber: '安全策略',
     live: 'Live',
     unknown: '未知',
@@ -456,7 +493,8 @@ export default {
       antigravity: 'Antigravity',
       kimi: 'Kimi',
       zhipu: '智谱 GLM',
-      deepseek: 'DeepSeek'
+      deepseek: 'DeepSeek',
+      minimax: 'MiniMax'
     },
     // 检查模式（监控条目的工作方式）
     checkMode: {
@@ -625,6 +663,8 @@ export default {
       cacheReadShort: '读',
       tierHint: '按单次请求的总上下文（输入 + 缓存写入 + 缓存读取）所在档位对整单计价',
       tierHintMarginal: '仅超过阈值的部分按该档计价，输出不加价',
+      maxReasoningMultiplierBadge: 'Max ×{multiplier}',
+      maxReasoningMultiplierHint: '最终转发的推理强度为 max 时，整次请求的计费与额度消耗乘以 {multiplier}',
       marginalBadge: '超出部分计价',
       timePricingRowHint: '按 {timezone} 时间，在该时段内发起的请求按本行价格计费',
       timePricingRowHintWeekdays:
