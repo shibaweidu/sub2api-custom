@@ -569,10 +569,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					}
 				}
 				if !outputStarted {
-					if retryErr := s.newCodexPreOutputRetrySSEError(c, account, resp, dataBytes, eventType, failedMessage); retryErr != nil {
-						sawFailedEvent = true
-						streamEarlyErr = retryErr
-						return
+					if !cyberHit {
+						if retryFailure := configuredOpenAIStreamRetryFailure(ctx, dataBytes, failedMessage, usage); retryFailure != nil {
+							s.recordOpenAIStreamUpstreamError(c, account, false, upstreamRequestID, "retry", dataBytes, failedMessage)
+							streamEarlyErr = retryFailure
+							return
+						}
 					}
 					shouldFailover := false
 					if !cyberHit {
@@ -584,7 +586,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					}
 					if shouldFailover {
 						sawFailedEvent = true
-						streamEarlyErr = s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+						failure := s.newOpenAIStreamFailoverErrorWithModel(c, account, false, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+						failure.ConfiguredRetryUnsafe = failure.ConfiguredRetryUnsafe || openAIUsageHasTokens(usage)
+						streamEarlyErr = failure
 						return
 					}
 					if !cyberHit && !sawBareError {
@@ -1244,6 +1248,9 @@ func mergeOpenAIUsageNonZero(dst *OpenAIUsage, src OpenAIUsage) {
 	if src.ImageInputTokens > 0 {
 		dst.ImageInputTokens = src.ImageInputTokens
 	}
+	if src.ImageCacheReadTokens > 0 {
+		dst.ImageCacheReadTokens = src.ImageCacheReadTokens
+	}
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
@@ -1466,12 +1473,23 @@ func (s *OpenAIGatewayService) bindHTTPResponseAccount(ctx context.Context, c *g
 	if store == nil {
 		return
 	}
+	// The client may close the stream immediately after receiving its terminal
+	// event, canceling the request context before these durable affinity writes
+	// run. Preserve request values, but give all Redis writes one bounded budget
+	// independent of the downstream connection lifecycle.
+	bindBaseCtx := context.Background()
+	if ctx != nil {
+		bindBaseCtx = context.WithoutCancel(ctx)
+	}
+	bindCtx, cancel := context.WithTimeout(bindBaseCtx, openAIWSStateStoreRedisTimeout)
+	defer cancel()
+
 	groupID := getOpenAIGroupIDFromContext(c)
 	ttl := s.openAIWSResponseStickyTTL()
-	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(ctx, groupID, responseID, account.ID, ttl))
+	logOpenAIWSBindResponseAccountWarn(groupID, account.ID, responseID, store.BindResponseAccount(bindCtx, groupID, responseID, account.ID, ttl))
 	if rawOwner, ok := c.Get(openAIHTTPResponseOwnerContextKey); ok {
 		if owner, ok := rawOwner.(openAIHTTPResponseOwner); ok && owner.userID > 0 && owner.apiKeyID > 0 {
-			if err := s.BindOpenAIHTTPResponseOwner(ctx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
+			if err := s.BindOpenAIHTTPResponseOwner(bindCtx, groupID, responseID, owner.userID, owner.apiKeyID); err != nil {
 				logger.L().Warn(
 					"openai.http_bind_response_owner_failed",
 					zap.Int64("group_id", groupID),
@@ -1606,6 +1624,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	if account.Type == AccountTypeOAuth && bodyLooksLikeSSE {
 		return s.handleSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
+	if IsUpstreamBillingError(resp.StatusCode, body) {
+		return nil, s.nonStreamingJSONBillingError(resp, c, account, body, mappedModel, false)
+	}
 	if account != nil && account.IsGrok() && isOpenAIResponsesCompactPath(c) {
 		body, err = convertGrokResponseToOpenAICompact(body)
 		if err != nil {
@@ -1698,7 +1719,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
 		}
-		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, false, terminalType, terminalPayload, msg, s.parseSSEUsageFromBody(bodyText), mappedModel); failoverErr != nil {
 			return nil, failoverErr
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)
@@ -1824,6 +1845,11 @@ func buildOpenAIResponseFailedSSE(responseID, model string, source []byte, fallb
 	if message == "" {
 		message = "Upstream response failed"
 	}
+	if IsUpstreamBillingError(http.StatusOK, source) {
+		errorType = "upstream_error"
+		code = "upstream_account_unavailable"
+		message = UpstreamBillingExhaustedClientMessage
+	}
 	errorBody := gin.H{"code": code, "message": message}
 	if errorType != "" {
 		errorBody["type"] = errorType
@@ -1856,6 +1882,36 @@ func sanitizeOpenAIResponseFailedEventForClient(payload []byte, eventType string
 		return payload, false
 	}
 	updated := payload
+	if IsUpstreamBillingError(openAIStreamFailureStatus(updated, extractOpenAISSEErrorMessage(updated)), updated) {
+		// Rebuild a minimal protocol envelope. Providers sometimes repeat their
+		// billing message in top-level details or custom response fields.
+		safeError := gin.H{
+			"type": "upstream_error", "code": "upstream_account_unavailable",
+			"message": UpstreamBillingExhaustedClientMessage,
+		}
+		safe := gin.H{"type": eventType}
+		if seq := gjson.GetBytes(payload, "sequence_number"); seq.Type == gjson.Number {
+			safe["sequence_number"] = seq.Int()
+		}
+		if isFailedEvent || gjson.GetBytes(payload, "response").IsObject() {
+			response := gin.H{"status": "failed", "error": safeError}
+			for _, key := range []string{"id", "object", "model"} {
+				if value := gjson.GetBytes(payload, "response."+key); value.Type == gjson.String {
+					response[key] = value.String()
+				}
+			}
+			if created := gjson.GetBytes(payload, "response.created_at"); created.Type == gjson.Number {
+				response["created_at"] = created.Int()
+			}
+			safe["response"] = response
+		}
+		if !isFailedEvent || gjson.GetBytes(payload, "error").Exists() {
+			safe["error"] = safeError
+		}
+		// Values are limited to JSON primitives and maps, so marshaling cannot fail.
+		sanitized, _ := json.Marshal(safe)
+		return sanitized, !bytes.Equal(sanitized, payload)
+	}
 	// 容量降载码对 Codex CLI 是致命错误；事件既然要写给客户端（failover 已不可用），
 	// 就改写为客户端可重试的错误码。error 帧与 response.failed 都要改：上游降载
 	// 总是先推 error 帧再收 failed，两帧携带同一个错误。

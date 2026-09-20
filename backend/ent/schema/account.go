@@ -70,6 +70,7 @@ func (Account) Fields() []ent.Field {
 		field.String("type").
 			MaxLen(20).
 			NotEmpty(),
+		field.String("account_scope").MaxLen(20).Default("system").Comment("system or shared; controls scheduler isolation"),
 
 		// credentials: 认证凭证，以 JSONB 格式存储
 		// 结构取决于 type 字段：
@@ -99,13 +100,6 @@ func (Account) Fields() []ent.Field {
 		// 用于限制同一时间对该账户发起的请求数量
 		field.Int("concurrency").
 			Default(3),
-
-		// rate_limit_429_retry_count: 首次收到上游 429 后，在同一账号上额外重试的次数。
-		// 0 表示关闭；默认 5，最多 10，避免单个请求长期占用并发槽。
-		field.Int("rate_limit_429_retry_count").
-			Default(5).
-			Min(0).
-			Max(10),
 
 		field.Int("load_factor").Optional().Nillable(),
 
@@ -224,6 +218,7 @@ func (Account) Edges() []ent.Edge {
 		edge.To("proxy", Proxy.Type).
 			Field("proxy_id").
 			Unique(),
+		edge.To("proxies", Proxy.Type).Through("account_proxies", AccountProxy.Type),
 		// children/parent: linked spark shadow relationship.
 		// parent_account_id is nullable, and the active one-shadow-per-parent rule
 		// is enforced by the partial unique index in migration 154a.

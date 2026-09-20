@@ -23,16 +23,11 @@
 
 - グループごとにユーザー単位の同時実行上限を設定できます。「ユーザー + グループ」単位で独立して集計し、既存のユーザー単位・アカウント単位の同時実行制御と併用します。
 - API Key ごとに同一プラットフォームのフォールバックグループを選択できます。毎回プライマリグループを先に完全に試し、利用可能なアカウントがない場合のみフォールバックします。課金、クォータ、RPM、同時実行数、利用量の帰属はプライマリグループのままです。
-- OpenAI アカウント単位の透支機能スイッチと `CPA fingerprint egress` モードを提供します。CPA モードはアカウントごとに一意で安定したデバイス識別情報を維持しつつ、すべてのセッションやスレッドを同一化しません。
-- Codex の 5h / 7d 使用率が 95% に達すると通常の OAuth テキストリクエストへ透支用ペイロードを事前適用し、100% 到達後は実際の業務リクエスト結果を直接の判定根拠として使用します。
-- 注入済みリクエストが明確なクォータ 429 を返した場合、そのクォータ周期を `failed` として確定します。業務リクエストの根拠が得られない場合のみ、周期ごとに最大 1 回の独立プローブを実行します。
-- 検証成功後もアカウントをスケジュール対象に保ち、5h / 7d それぞれの透支リクエスト数、Token、コスト、回復時刻を記録します。
-- `pending`、`passed`、`failed`、`inconclusive`、`recovered` の状態を管理画面と PostgreSQL に保存します。
-- 一時的な 429、タイムアウト、ネットワーク障害、5xx は `inconclusive` として扱い、バックグラウンドで自動再試行しません。
-- PostgreSQL の atomic claim により複数インスタンスで重複検証を防ぎ、最終失敗・アカウント停止・スケジューラ通知を同一トランザクションで保存します。追加の schema migration は不要です。
-- 設定スイッチで透支ロジックを直ちに無効化し、上流 Sub2API のスケジューリング動作へ戻せます。
+- Codex の単一マシン・複数ウィンドウモードに対応し、アカウントごとのデバイス識別とセッション境界を維持します。
+- アカウント表で最近のリクエストを独立して更新でき、列幅も調整できます。
+- ホスト更新プログラムによりカスタムブランチからソースを更新できます。
 
-ソースビルド、既存環境からの移行、検証、更新、ロールバック、Nginx、トラブルシューティングについては、**[中国語のデプロイ・運用ガイド](CODEX_OVERDRAFT_DEPLOYMENT_CN.md)** を参照してください。
+ソースビルド、既存環境からの移行、検証、更新、ロールバック、Nginx、トラブルシューティングについては、**[中国語のデプロイ・運用ガイド](deploy/README.md)** を参照してください。
 
 ```bash
 git clone https://github.com/DeanZFC/sub2api-custom.git sub2api-custom
@@ -79,8 +74,8 @@ docker compose \
 </tr>
 
 <tr>
-<td width="180"><a href="https://apikey.fun/register?aff=SUB2API"><img src="assets/partners/logos/apikey-fun.png" alt="APIKEY.FUN" width="150"></a></td>
-<td>APIKEY.FUN のご支援に感謝します！<a href="https://apikey.fun/register?aff=SUB2API">APIKEY.FUN</a> は sub2api オープンソースプロジェクトのコアコントリビューターの一つであり、オープンで安定した、コストパフォーマンスに優れた AI API アクセスサービスの提供に取り組んでいます。プラットフォームは Claude、OpenAI、Gemini など人気モデルの API 中継サービスをサポートし、価格は公式料金のわずか 7% から。専用リンク <a href="https://apikey.fun/register?aff=SUB2API">APIKEY</a> から登録すると、すべてのチャージで永久 5% 割引をご利用いただけます。</td>
+<td width="180"><a href="https://apikey.fan/register?aff=SUB2API"><img src="assets/partners/logos/apikey-fun.png" alt="APIKEY.FUN" width="150"></a></td>
+<td>APIKEY.FUN のご支援に感謝します！<a href="https://apikey.fan/register?aff=SUB2API">APIKEY.FUN</a> は sub2api オープンソースプロジェクトのコアコントリビューターの一つであり、オープンで安定した、コストパフォーマンスに優れた AI API アクセスサービスの提供に取り組んでいます。プラットフォームは Claude、OpenAI、Gemini など人気モデルの API 中継サービスをサポートし、価格は公式料金のわずか 7% から。専用リンク <a href="https://apikey.fan/register?aff=SUB2API">APIKEY</a> から登録すると、すべてのチャージで永久 5% 割引をご利用いただけます。</td>
 </tr>
 
 <tr>
@@ -131,14 +126,6 @@ docker compose \
 <tr>
 <td width="180"><a href="https://www.proxy4free.com/?keyword=4yjqecpc"><img src="assets/partners/logos/proxy4free.png" alt="proxy4free" width="150"></a></td>
 <td>Proxy4Free のご支援に感謝します！Proxy4Free は開発者と AI アプリケーション向けのデータプロキシサービスプロバイダーで、住宅プロキシ、静的住宅プロキシ、ISP プロキシ、データセンタープロキシなど多様なプロキシソリューションを提供しており、Web Scraping、Browser Automation、AI Agent などのシナリオに適しています。グローバル IP リソース、安定した接続、柔軟な切り替えをサポートし、開発者のデータ収集成功率の向上と IP ブロックリスクの低減を支援します。<a href="https://www.proxy4free.com/?keyword=4yjqecpc">こちらのリンクから登録</a>して、より安定した効率的な自動化ワークフローを簡単に構築しましょう。
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="http://www.fastaitoken.com/register"><img src="assets/partners/logos/fastaitoken.jpg" alt="fastaitoken" width="150"></a></td>
-<td>🎉 FastAIToken のご支援に感謝します！<a href="http://www.fastaitoken.com/register">FastAIToken</a> は開発者向けの AI API アグリゲーションプラットフォームで、OpenAI、Claude、Gemini などの主要な大規模モデルに対応しています。チャージは 1:1（1 元 = 1 米ドル分の API クレジット）で、開発者がより低コスト・より手軽に世界トップクラスの大規模モデルサービスを利用できます。<br>
-
-🚀 プラットフォームでは多彩なチャネルを自由に選択できます：超低価格の 0.02x OpenAI 特典グループ（期間限定）、最低 0.25x の OpenAI グループ、0.7x Claude（95% 固定キャッシュ）、1.2x Claude Max チャネル。さらに、各グループの可用率・レイテンシ・稼働状況をリアルタイムで表示する公開ステータスページを提供し、透明で信頼できるサービスを実現。7×24 時間の有人テクニカルサポート（ボットではありません）により、開発者のニーズに迅速に対応します。
 </td>
 </tr>
 

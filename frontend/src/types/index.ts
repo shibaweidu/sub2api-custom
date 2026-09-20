@@ -191,6 +191,7 @@ export interface CustomMenuItem {
   icon_svg: string
   url: string
   page_slug?: string
+  hide_open_button?: boolean
   visibility: 'user' | 'admin'
   sort_order: number
 }
@@ -276,6 +277,10 @@ export interface PublicSettings {
   /** When true, user monitor hides the user ranking tab and /users payload. */
   channel_monitor_hide_user_ranking?: boolean
   available_channels_enabled: boolean
+  /** When false, the whole user-facing subscription surface is hidden. Default true. */
+  subscription_enabled: boolean
+  /** Mirrors payment config BALANCE_PAYMENT_DISABLED; true = balance top-up closed (subscription-only site). */
+  payment_balance_disabled: boolean
   model_plaza_enabled: boolean
   model_plaza_require_auth: boolean
   plugin_management_enabled: boolean
@@ -533,7 +538,7 @@ export interface PaginationConfig {
 
 // ==================== API Key & Group Types ====================
 
-export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'composite'
+export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go' | 'composite'
 
 export type VideoModelPrices = Record<string, Record<string, number>>
 
@@ -561,6 +566,8 @@ export interface Group {
   description: string | null
   platform: GroupPlatform
   rate_multiplier: number
+	/** Internal marker for groups managed by the shared account pool. */
+	is_shared_pool?: boolean
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
 	max_reasoning_effort?: string // Anthropic/OpenAI reasoning ceiling; empty means unlimited
 	max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
@@ -920,7 +927,7 @@ export interface UpdateGroupRequest {
 
 // ==================== Account & Proxy Types ====================
 
-export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax'
+export type AccountPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity' | 'grok' | 'kimi' | 'zhipu' | 'deepseek' | 'minimax' | 'opencode_go'
 export type AccountType = 'oauth' | 'setup-token' | 'apikey' | 'upstream' | 'bedrock' | 'service_account'
 export type OAuthAddMethod = 'oauth' | 'setup-token'
 export type ProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
@@ -1157,6 +1164,50 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface CodexTurnTicketStatus {
+  model: string
+  length?: number
+  target_length: number
+  ready: boolean
+  remaining_seconds: number
+  blocked: boolean
+  expires_at?: string
+  attempts?: number
+  successes?: number
+  failures?: number
+  inject_misses?: number
+  last_inject_miss_at?: string | null
+  consecutive_failures?: number
+  in_progress?: boolean
+  last_attempt_at?: string | null
+  next_retry_at?: string | null
+  last_error_code?: string
+  last_error?: string
+  last_http_status?: number
+  last_length?: number
+  last_proxy_index?: number
+  paused?: boolean
+  plan_known?: boolean
+}
+
+export interface CodexTicketHistoryEvent {
+  id: number
+  at: string
+  model: string
+  outcome: 'success' | 'failure' | 'canceled'
+  error_code: string
+  http_status: number
+  length: number
+  target_length: number
+  proxy_index: number
+  duration_ms: number
+}
+
+export interface CodexTicketHistoryResponse {
+  events: CodexTicketHistoryEvent[]
+  limit: number
+}
+
 export interface Account {
   id: number
   name: string
@@ -1170,6 +1221,15 @@ export interface Account {
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
+  codex_turn_tickets?: CodexTurnTicketStatus[]
+  /** Resolved gateway and account policy for Codex 292 / 332 tickets. */
+  codex_ticket_config?: {
+    gateway_enabled: boolean
+    account_enabled: boolean
+    enabled: boolean
+    fail_closed: boolean
+    target_length: number
+  }
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
@@ -1184,6 +1244,8 @@ export interface Account {
     auto_reset_credit_enabled?: boolean
     auto_reset_credit_5h_threshold?: number
     auto_reset_credit_7d_threshold?: number
+    codex_ticket_enabled?: boolean
+    codex_ticket_fail_closed?: boolean
     codex_auto_reset_credit_state?: {
       status?: 'checking' | 'available' | 'resetting' | 'success' | 'no_credit' | 'failed'
       trigger_window?: string
@@ -1194,8 +1256,7 @@ export interface Account {
     }
   } & Record<string, unknown>)
   proxy_id: number | null
-  proxy_concurrency_limit_enabled?: boolean
-  proxy_pool_ids?: number[]
+  proxy_ids?: number[]
   proxy_pool?: Array<{ proxy_id: number; proxy_name: string; current_concurrency: number; max_concurrency: number }>
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
@@ -1211,6 +1272,8 @@ export interface Account {
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  shared_total_call_count?: number
+  shared_listing_status?: string
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
   last_used_at: string | null
@@ -1329,10 +1392,6 @@ export interface UsageProgress {
   window_stats?: WindowStats | null // 窗口期统计（从窗口开始到当前的使用量）
   used_requests?: number
   limit_requests?: number
-  overdraft_active?: boolean
-  overdraft_stats?: WindowStats | null
-  overdraft_started_at?: string | null
-  overdraft_recover_at?: string | null
 }
 
 // Antigravity 单个模型的配额信息
@@ -1389,7 +1448,6 @@ export interface AccountUsageInfo {
   updated_at: string | null
   five_hour: UsageProgress | null
   seven_day: UsageProgress | null
-  codex_quota_overdraft?: CodexQuotaOverdraftProbeState | null
   seven_day_sonnet: UsageProgress | null
   seven_day_fable?: UsageProgress | null
   thirty_day?: UsageProgress | null
@@ -1438,20 +1496,6 @@ export interface AccountUsageInfo {
   error?: string            // usage 获取失败时的错误信息
 }
 
-export interface CodexQuotaOverdraftProbeState {
-  status?: string
-  attempts?: number
-  limit?: number
-  quota_window?: string
-  tested_at?: string | null
-  model?: string
-  reason_code?: string
-  active?: boolean
-  started_at?: string | null
-  recover_at?: string | null
-  stats?: WindowStats | null
-}
-
 // OpenAI Codex usage snapshot (from response headers)
 export interface CodexUsageSnapshot {
   // Legacy fields (kept for backwards compatibility)
@@ -1479,7 +1523,7 @@ export interface CodexUsageSnapshot {
 
 export type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 export type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
-export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
+export type OpenAIEndpointCapability = 'chat_completions' | 'embeddings' | 'seedance'
 
 export interface OpenAICompactState {
   openai_compact_mode?: OpenAICompactMode
@@ -1502,8 +1546,7 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
-  proxy_concurrency_limit_enabled?: boolean
-  proxy_pool_ids?: number[]
+  proxy_ids?: number[]
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1651,8 +1694,7 @@ export interface CodexSessionImportRequest {
   notes?: string | null
   group_ids?: number[]
   proxy_id?: number | null
-  proxy_concurrency_limit_enabled?: boolean
-  proxy_pool_ids?: number[]
+  proxy_ids?: number[]
   concurrency?: number
   priority?: number
   rate_multiplier?: number
@@ -1667,6 +1709,7 @@ export interface CodexSessionImportRequest {
 }
 
 export interface OpenAICodexPATCreateRequest {
+  proxy_ids?: number[]
   access_token: string
   name?: string
   notes?: string | null
@@ -2179,6 +2222,7 @@ export interface UsageQueryParams {
   page?: number
   page_size?: number
   api_key_id?: number
+  shared_only?: boolean
   user_id?: number
   account_id?: number
   group_id?: number
@@ -2459,6 +2503,103 @@ export interface UpdateScheduledTestPlanRequest {
   max_results?: number
   auto_recover?: boolean
 }
+
+/** Generalized configurable health-test definitions and execution history. */
+export interface TestType {
+  id: number
+  name: string
+  key: string
+  description?: string | null
+  output_kind: 'html' | 'number' | 'text' | string
+  prompt: string
+  enabled: boolean
+  /** Controls the order of test type tabs shown to end users. */
+  sort_order?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface TestPlan {
+  id: number
+  name?: string
+  /** Controls the order of this rule's group in user-facing test results. */
+  sort_order?: number
+  test_definition_id?: number | null
+  group_id?: number | null
+  account_id?: number | null
+  /** Execution target selected by the administrator. */
+  target_mode?: 'group' | 'all_accounts' | 'account'
+  test_definition?: TestType | null
+  model_id?: string
+  /** Optional effort forwarded to the selected model (Codex-style). */
+  reasoning_effort?: string | null
+  cron_expression?: string
+  enabled: boolean
+  max_results?: number
+  last_run_at?: string | null
+  next_run_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface TestResult {
+  plan_name?: string
+  test_name?: string
+  /** Configured test type order for the user-facing tabs. */
+  test_order?: number
+  /** Configured test rule/plan order used to derive group display order. */
+  plan_order?: number
+  group_name?: string
+  account_id?: number | null
+  target_mode?: 'group' | 'all_accounts' | 'account'
+  id: number
+  plan_id?: number
+  test_definition_id?: number
+  test_definition?: TestType | null
+  plan?: TestPlan | null
+  group_id?: number | null
+  model_id?: string
+  /** Reasoning level used for this test execution, when explicitly selected. */
+  reasoning_effort?: string | null
+  status: string
+  output_kind: 'html' | 'number' | 'text' | string
+  output_html?: string | null
+  output_numeric?: number | null
+  response_text?: string | null
+  error_message?: string | null
+  latency_ms?: number | null
+  started_at?: string
+  finished_at?: string
+  created_at?: string
+}
+
+export interface CreateTestTypeRequest {
+  name: string
+  key: string
+  description?: string
+  output_kind: string
+  prompt: string
+  enabled?: boolean
+  sort_order?: number
+}
+
+export interface UpdateTestTypeRequest extends Partial<CreateTestTypeRequest> {}
+
+export interface CreateTestPlanRequest {
+  name?: string
+  sort_order?: number
+  test_definition_id: number
+  group_id?: number | null
+  account_id?: number | null
+  target_mode?: 'group' | 'all_accounts' | 'account'
+  model_id: string
+  reasoning_effort?: string | null
+  cron_expression?: string
+  enabled?: boolean
+  max_results?: number
+}
+
+export type UpdateTestPlanRequest = Partial<CreateTestPlanRequest>
 
 // Payment types
 export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'

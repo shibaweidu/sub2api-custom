@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -260,13 +261,21 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				// If this stage fixed the signature issue, we stop; otherwise we may try the next stage.
 				if retryResp.StatusCode != http.StatusBadRequest || !isSignatureRelatedError(retryBody) {
 					respBody = retryBody
-					resp = rebuildAntigravityRetryResponse(retryResp, retryBody)
+					resp = &http.Response{
+						StatusCode: retryResp.StatusCode,
+						Header:     retryResp.Header.Clone(),
+						Body:       io.NopCloser(bytes.NewReader(retryBody)),
+					}
 					break
 				}
 
 				// Still signature-related; capture context and allow next stage.
 				respBody = retryBody
-				resp = rebuildAntigravityRetryResponse(retryResp, retryBody)
+				resp = &http.Response{
+					StatusCode: retryResp.StatusCode,
+					Header:     retryResp.Header.Clone(),
+					Body:       io.NopCloser(bytes.NewReader(retryBody)),
+				}
 			}
 		}
 
@@ -332,7 +341,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 								retryBody := s.readUpstreamErrorBody(retryResp)
 								_ = retryResp.Body.Close()
 								respBody = retryBody
-								resp = rebuildAntigravityRetryResponse(retryResp, retryBody)
+								resp = &http.Response{
+									StatusCode: retryResp.StatusCode,
+									Header:     retryResp.Header.Clone(),
+									Body:       io.NopCloser(bytes.NewReader(retryBody)),
+								}
 							}
 						} else {
 							logger.LegacyPrintf("service.antigravity_gateway", "Antigravity account %d: budget rectifier retry failed: %v", account.ID, retryErr)
@@ -393,11 +406,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 						Message:            upstreamMsg,
 						Detail:             upstreamDetail,
 					})
-					return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true})
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true}
 				}
 			}
 
-			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+			if s.shouldFailoverUpstreamError(resp.StatusCode) || IsUpstreamBillingError(resp.StatusCode, respBody) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
@@ -413,7 +426,10 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					Message:            upstreamMsg,
 					Detail:             upstreamDetail,
 				})
-				return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody})
+				if IsUpstreamBillingError(resp.StatusCode, respBody) {
+					return nil, newUpstreamBillingFailoverError(resp.StatusCode, resp.Header, respBody, false)
+				}
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, ResponseHeaders: resp.Header.Clone()}
 			}
 
 			return nil, s.writeMappedClaudeError(c, account, resp.StatusCode, resp.Header.Get("x-request-id"), respBody)

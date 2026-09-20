@@ -46,6 +46,9 @@ func RegisterAdminRoutes(
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
 
+		// 共享账号池审核与运营控制（独立于普通账号管理）
+		registerSharedAccountPoolRoutes(admin, h)
+
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
@@ -130,6 +133,24 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+	}
+}
+
+func registerSharedAccountPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	pool := admin.Group("/shared-pool")
+	{
+		pool.GET("/listings", h.Admin.SharedAccountPool.AdminListCards)
+		pool.GET("/listings/:id/account", h.Admin.SharedAccountPool.AdminGetAccount)
+		pool.GET("/listings/:id/models", h.Admin.SharedAccountPool.AdminGetAvailableModels)
+		pool.PUT("/listings/:id/account", h.Admin.SharedAccountPool.AdminUpdateAccount)
+		pool.POST("/listings/:id/test", h.Admin.SharedAccountPool.AdminTestAccount)
+		pool.GET("/users", h.Admin.SharedAccountPool.AdminListUsers)
+		pool.GET("/revenue", h.Admin.SharedAccountPool.AdminListRevenue)
+		pool.GET("/revenue/records", h.Admin.SharedAccountPool.AdminListRevenueRecords)
+		pool.PUT("/listings/:id/status", h.Admin.SharedAccountPool.AdminSetStatus)
+		pool.PUT("/listings/:id/listed", h.Admin.SharedAccountPool.AdminSetListed)
+		pool.DELETE("/listings/:id", h.Admin.SharedAccountPool.AdminDelete)
+		pool.PUT("/users/:user_id/publish-permission", h.Admin.SharedAccountPool.AdminSetUserPublishPermission)
 	}
 }
 
@@ -365,6 +386,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/ollama-cloud-usage/settings", h.Admin.Account.GetOllamaCloudUsageSettings)
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
+		accounts.GET("/:id/codex-ticket-history", h.Admin.Account.GetCodexTicketHistory)
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)
 		accounts.POST("/check-mixed-channel", h.Admin.Account.CheckMixedChannel)
@@ -559,6 +581,7 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
+		adminSettings.POST("/openai-codex-ticket/test-proxy", h.Admin.Setting.TestOpenAICodexTicketProxy)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)
@@ -582,8 +605,6 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 面板 API 限流配置
 		adminSettings.GET("/panel-rate-limit", h.Admin.Setting.GetPanelRateLimitSettings)
 		adminSettings.PUT("/panel-rate-limit", h.Admin.Setting.UpdatePanelRateLimitSettings)
-		adminSettings.GET("/codex-pre-output-retry", h.Admin.Setting.GetCodexPreOutputRetrySettings)
-		adminSettings.PUT("/codex-pre-output-retry", h.Admin.Setting.UpdateCodexPreOutputRetrySettings)
 		// 流超时处理配置
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
@@ -678,6 +699,7 @@ func registerSubscriptionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		subscriptions.GET("/:id/progress", h.Admin.Subscription.GetProgress)
 		subscriptions.POST("/assign", h.Admin.Subscription.Assign)
 		subscriptions.POST("/bulk-assign", h.Admin.Subscription.BulkAssign)
+		subscriptions.POST("/bulk-action", h.Admin.Subscription.BulkAction)
 		subscriptions.POST("/:id/extend", h.Admin.Subscription.Extend)
 		subscriptions.POST("/:id/reset-quota", h.Admin.Subscription.ResetQuota)
 		subscriptions.POST("/:id/revoke", h.Admin.Subscription.Revoke)
@@ -718,13 +740,32 @@ func registerUserAttributeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 }
 
 func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	defs := admin.Group("/scheduled-test-definitions")
+	{
+		defs.GET("", h.Admin.ScheduledTest.ListDefinitions)
+		defs.POST("", h.Admin.ScheduledTest.CreateDefinition)
+		defs.PUT("/:id", h.Admin.ScheduledTest.UpdateDefinition)
+		defs.DELETE("/:id", h.Admin.ScheduledTest.DeleteDefinition)
+	}
 	plans := admin.Group("/scheduled-test-plans")
 	{
 		plans.POST("", h.Admin.ScheduledTest.Create)
 		plans.PUT("/:id", h.Admin.ScheduledTest.Update)
 		plans.DELETE("/:id", h.Admin.ScheduledTest.Delete)
 		plans.GET("/:id/results", h.Admin.ScheduledTest.ListResults)
+		plans.POST("/:id/run", h.Admin.ScheduledTest.RunNow)
 	}
+	// Generic aliases used by the test management UI.
+	admin.GET("/test-plans", h.Admin.ScheduledTest.ListPlans)
+	admin.POST("/test-plans", h.Admin.ScheduledTest.Create)
+	admin.PUT("/test-plans/:id", h.Admin.ScheduledTest.Update)
+	admin.DELETE("/test-plans/:id", h.Admin.ScheduledTest.Delete)
+	admin.GET("/test-plans/:id/results", h.Admin.ScheduledTest.ListResults)
+	admin.POST("/test-plans/:id/run", h.Admin.ScheduledTest.RunNow)
+	admin.DELETE("/test-results/:id", h.Admin.ScheduledTest.DeleteResult)
+	admin.POST("/test-results/:id/retry", h.Admin.ScheduledTest.RetryResult)
+	admin.DELETE("/scheduled-test-results/:id", h.Admin.ScheduledTest.DeleteResult)
+	admin.POST("/scheduled-test-results/:id/retry", h.Admin.ScheduledTest.RetryResult)
 	// Nested under accounts
 	admin.GET("/accounts/:id/scheduled-test-plans", h.Admin.ScheduledTest.ListByAccount)
 }
@@ -761,6 +802,7 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		plugins.POST("/:id/disable", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Disable)
 		plugins.DELETE("/:id", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Delete)
 		plugins.GET("/:id/config", h.Admin.Plugin.GetConfig)
+		plugins.GET("/:id/status", h.Admin.Plugin.Status)
 		plugins.PUT("/:id/config", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.SaveConfig)
 		plugins.POST("/:id/test", gin.HandlerFunc(stepUpAuth), h.Admin.Plugin.Test)
 		plugins.POST("/:id/ui-session", h.Admin.Plugin.CreateUISession)

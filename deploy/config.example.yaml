@@ -147,6 +147,7 @@ security:
       - "api.moonshot.cn"
       - "open.bigmodel.cn"
       - "api.minimaxi.com"
+      - "opencode.ai"
       - "generativelanguage.googleapis.com"
       - "cloudcode-pa.googleapis.com"
       - "*.openai.azure.com"
@@ -276,15 +277,6 @@ gateway:
   # 默认 false：保持纯文本 Codex 请求不被改写；客户端显式提供 image_generation tool 时，
   # 仍会在分组允许图片生成的情况下正常转发。
   codex_image_generation_bridge_enabled: false
-  # Experimental: allow eligible OpenAI OAuth Codex accounts to keep serving
-  # after the reported 5h/7d quota reaches the scheduling threshold.
-  # 实验性 Codex 额度透支：为符合条件的 OAuth 请求注入空操作工具调用，并忽略
-  # 5h/7d 用量百分比预暂停。真实上游 429 仍会触发账号冷却。此部署示例默认开启；
-  # 具体账号是否使用透支，再由账号新增/编辑页中的“Codex 额度透支”开关控制。
-  codex_quota_overdraft_enabled: true
-  # 为每个 OpenAI OAuth 账号固定唯一且稳定的 Codex 设备指纹；默认开启。
-  # 单个账号可在 extra 中显式设置 codex_fingerprint_mode: off 关闭。
-  openai_account_unique_fingerprint_enabled: true
   # Optional: template file used to build the final top-level Codex `instructions`.
   # 可选：用于构建最终 Codex 顶层 `instructions` 的模板文件路径。
   #
@@ -314,11 +306,38 @@ gateway:
   # OpenAI 透传模式是否放行客户端超时头（如 x-stainless-timeout）
   # 默认 false：过滤超时头，降低上游提前断流风险。
   openai_passthrough_allow_timeout_headers: false
-  # Model used for OpenAI /responses/compact upstream requests (default: gpt-5.4).
-  # OpenAI /responses/compact 上游模型（默认 gpt-5.4）。
+  # Model used for OpenAI /responses/compact upstream requests (default: gpt-5.5).
+  # OpenAI /responses/compact 上游模型（默认 gpt-5.5）。
   # Use this to avoid compact failures when newer models are not yet supported by the compact endpoint.
   # 当 compact 端点暂未支持更新模型时，可通过这里降级规避失败。
-  openai_compact_model: "gpt-5.4"
+  openai_compact_model: "gpt-5.5"
+  # Codex tickets: gateway master switch + account enable/fail-closed switches.
+  # 系统设置 → 网关 → Codex 门票：总开关和共享打票代理池（每行一个完整代理 URL）。
+  # 总开关关闭后所有账号停止打票、注入和缺票拦截，账号配置/状态在界面隐藏。
+  # 账号管理仅设置是否启用、缺票是否禁用模型（默认开启）；业务代理保持独立。
+  # Pro 门票长度 292；Team/Business 332；target_length 仅作为其他/未知套餐默认值。
+  # 下方 harvest_proxy_url 接受单行或 YAML 多行（|）；后台显式清空后不再回退此值。
+  # 旧账号专用打票代理池已停用，需要在网关配置共享池。
+  openai_codex_ticket:
+    enabled: false
+    target_length: 292
+    ttl_seconds: 3600
+    refresh_before_seconds: 600
+    # 只有后台尚未保存代理池时才使用此值；HTTP(S)/SOCKS5(h)，每行一个。
+    harvest_proxy_url: ""
+    # 每个账号/模型独立重试，普通未命中在完成后至少等 6 秒，并加少量抖动。
+    # 429 遵守 Retry-After；认证/权限/额度错误冷却，明确不支持的模型暂停 30 分钟。
+    # 配置/认证修改或重新启用账号后可提前恢复。业务并发设置不受影响。
+    harvest_probe_interval_seconds: 6
+    # 整次打票（含获取/刷新认证）的总时限。
+    harvest_attempt_timeout_seconds: 25
+    harvest_max_concurrent: 8
+    harvest_account_concurrency: 1
+    harvest_proxy_concurrency: 2
+    fail_closed: true
+    models:
+      - gpt-6-astra
+      - gpt-5.6-sol
   # ChatGPT Frameless Live 单会话硬上限（秒）。
   live:
     max_session_duration_seconds: 3600
@@ -365,10 +384,16 @@ gateway:
     max_idle_per_account: 12
     # 是否按账号并发动态计算连接池上限：
     # effective_max_conns = min(max_conns_per_account, ceil(account.concurrency * factor))
+    # 旧版及 mode_router_v2 的 ctx_pool 共用此开关和下方类型系数；关闭后使用 max_conns_per_account。
+    # mode_router_v2 下并发数 <= 0 的账号仍不可调度。
     dynamic_max_conns_by_account_concurrency_enabled: true
-    # 按账号类型分别设置系数（OAuth / API Key）
-    oauth_max_conns_factor: 1.0
-    apikey_max_conns_factor: 1.0
+    # 按账号类型分别设置系数（OAuth / API Key）。
+    # ctx_pool 接入下每个客户端会话在整个生命周期（轮次之间也不释放）持有一条上游连接，
+    # 该上限限制的是同时持有连接的会话数，在飞请求数另由账号并发限制；
+    # 系数 1.0 会让存活会话数一到并发数，新会话就收到 1013 upstream websocket is busy。
+    # 空闲连接数另受 max_idle_per_account 裁剪。
+    oauth_max_conns_factor: 5.0
+    apikey_max_conns_factor: 5.0
     dial_timeout_seconds: 10
     read_timeout_seconds: 900
     write_timeout_seconds: 120

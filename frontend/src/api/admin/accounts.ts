@@ -19,6 +19,7 @@ import type {
   AdminDataImportResult,
   CodexSessionImportRequest,
   CodexSessionImportResult,
+  CodexTicketHistoryResponse,
   OpenAICodexPATCreateRequest,
   CheckMixedChannelRequest,
   CheckMixedChannelResponse,
@@ -311,9 +312,13 @@ export async function testAccount(id: number): Promise<{
  * @param id - Account ID
  * @returns Updated account
  */
-export async function refreshCredentials(id: number): Promise<Account> {
-  const { data } = await apiClient.post<Account>(`/admin/accounts/${id}/refresh`)
-  return data
+export type RefreshCredentialsResult =
+  | { account: Account; message: string; warning: 'missing_project_id_temporary' }
+  | { account: Account; message?: never; warning?: never }
+
+export async function refreshCredentials(id: number): Promise<RefreshCredentialsResult> {
+  const { data } = await apiClient.post<Account | RefreshCredentialsResult>(`/admin/accounts/${id}/refresh`)
+  return 'account' in data ? data : { account: data }
 }
 
 /**
@@ -620,6 +625,7 @@ export interface UpstreamModelMetadata {
   supported_reasoning_levels?: string[]
   input_modalities?: string[]
   context_window?: number
+  max_context_window?: number
   max_output_tokens?: number
 }
 
@@ -1066,7 +1072,16 @@ export async function refreshOllamaCloudUsage(id: number): Promise<OllamaCloudUs
   return data
 }
 
+export async function getCodexTicketHistory(id: number, model: string, signal?: AbortSignal): Promise<CodexTicketHistoryResponse> {
+  const { data } = await apiClient.get<CodexTicketHistoryResponse>(`/admin/accounts/${id}/codex-ticket-history`, {
+    params: { model },
+    signal,
+  })
+  return data
+}
+
 export const accountsAPI = {
+  getCodexTicketHistory,
   list,
   listWithEtag,
   getUpstreamBillingRatesWithEtag,

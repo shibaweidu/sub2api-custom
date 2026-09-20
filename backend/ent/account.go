@@ -33,6 +33,8 @@ type Account struct {
 	Platform string `json:"platform,omitempty"`
 	// Type holds the value of the "type" field.
 	Type string `json:"type,omitempty"`
+	// system or shared; controls scheduler isolation
+	AccountScope string `json:"account_scope,omitempty"`
 	// Credentials holds the value of the "credentials" field.
 	Credentials map[string]interface{} `json:"credentials,omitempty"`
 	// Extra holds the value of the "extra" field.
@@ -43,8 +45,6 @@ type Account struct {
 	ProxyFallbackOriginID *int64 `json:"proxy_fallback_origin_id,omitempty"`
 	// Concurrency holds the value of the "concurrency" field.
 	Concurrency int `json:"concurrency,omitempty"`
-	// RateLimit429RetryCount holds the value of the "rate_limit_429_retry_count" field.
-	RateLimit429RetryCount int `json:"rate_limit_429_retry_count,omitempty"`
 	// LoadFactor holds the value of the "load_factor" field.
 	LoadFactor *int `json:"load_factor,omitempty"`
 	// Priority holds the value of the "priority" field.
@@ -95,6 +95,8 @@ type AccountEdges struct {
 	Groups []*Group `json:"groups,omitempty"`
 	// Proxy holds the value of the proxy edge.
 	Proxy *Proxy `json:"proxy,omitempty"`
+	// Proxies holds the value of the proxies edge.
+	Proxies []*Proxy `json:"proxies,omitempty"`
 	// Parent holds the value of the parent edge.
 	Parent *Account `json:"parent,omitempty"`
 	// Children holds the value of the children edge.
@@ -103,9 +105,11 @@ type AccountEdges struct {
 	UsageLogs []*UsageLog `json:"usage_logs,omitempty"`
 	// AccountGroups holds the value of the account_groups edge.
 	AccountGroups []*AccountGroup `json:"account_groups,omitempty"`
+	// AccountProxies holds the value of the account_proxies edge.
+	AccountProxies []*AccountProxy `json:"account_proxies,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [6]bool
+	loadedTypes [8]bool
 }
 
 // GroupsOrErr returns the Groups value or an error if the edge
@@ -128,12 +132,21 @@ func (e AccountEdges) ProxyOrErr() (*Proxy, error) {
 	return nil, &NotLoadedError{edge: "proxy"}
 }
 
+// ProxiesOrErr returns the Proxies value or an error if the edge
+// was not loaded in eager-loading.
+func (e AccountEdges) ProxiesOrErr() ([]*Proxy, error) {
+	if e.loadedTypes[2] {
+		return e.Proxies, nil
+	}
+	return nil, &NotLoadedError{edge: "proxies"}
+}
+
 // ParentOrErr returns the Parent value or an error if the edge
 // was not loaded in eager-loading, or loaded but was not found.
 func (e AccountEdges) ParentOrErr() (*Account, error) {
 	if e.Parent != nil {
 		return e.Parent, nil
-	} else if e.loadedTypes[2] {
+	} else if e.loadedTypes[3] {
 		return nil, &NotFoundError{label: account.Label}
 	}
 	return nil, &NotLoadedError{edge: "parent"}
@@ -142,7 +155,7 @@ func (e AccountEdges) ParentOrErr() (*Account, error) {
 // ChildrenOrErr returns the Children value or an error if the edge
 // was not loaded in eager-loading.
 func (e AccountEdges) ChildrenOrErr() ([]*Account, error) {
-	if e.loadedTypes[3] {
+	if e.loadedTypes[4] {
 		return e.Children, nil
 	}
 	return nil, &NotLoadedError{edge: "children"}
@@ -151,7 +164,7 @@ func (e AccountEdges) ChildrenOrErr() ([]*Account, error) {
 // UsageLogsOrErr returns the UsageLogs value or an error if the edge
 // was not loaded in eager-loading.
 func (e AccountEdges) UsageLogsOrErr() ([]*UsageLog, error) {
-	if e.loadedTypes[4] {
+	if e.loadedTypes[5] {
 		return e.UsageLogs, nil
 	}
 	return nil, &NotLoadedError{edge: "usage_logs"}
@@ -160,10 +173,19 @@ func (e AccountEdges) UsageLogsOrErr() ([]*UsageLog, error) {
 // AccountGroupsOrErr returns the AccountGroups value or an error if the edge
 // was not loaded in eager-loading.
 func (e AccountEdges) AccountGroupsOrErr() ([]*AccountGroup, error) {
-	if e.loadedTypes[5] {
+	if e.loadedTypes[6] {
 		return e.AccountGroups, nil
 	}
 	return nil, &NotLoadedError{edge: "account_groups"}
+}
+
+// AccountProxiesOrErr returns the AccountProxies value or an error if the edge
+// was not loaded in eager-loading.
+func (e AccountEdges) AccountProxiesOrErr() ([]*AccountProxy, error) {
+	if e.loadedTypes[7] {
+		return e.AccountProxies, nil
+	}
+	return nil, &NotLoadedError{edge: "account_proxies"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -177,9 +199,9 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case account.FieldRateMultiplier:
 			values[i] = new(sql.NullFloat64)
-		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldRateLimit429RetryCount, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
+		case account.FieldID, account.FieldProxyID, account.FieldProxyFallbackOriginID, account.FieldConcurrency, account.FieldLoadFactor, account.FieldPriority, account.FieldParentAccountID:
 			values[i] = new(sql.NullInt64)
-		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
+		case account.FieldName, account.FieldNotes, account.FieldPlatform, account.FieldType, account.FieldAccountScope, account.FieldStatus, account.FieldErrorMessage, account.FieldTempUnschedulableReason, account.FieldSessionWindowStatus, account.FieldQuotaDimension:
 			values[i] = new(sql.NullString)
 		case account.FieldCreatedAt, account.FieldUpdatedAt, account.FieldDeletedAt, account.FieldLastUsedAt, account.FieldExpiresAt, account.FieldRateLimitedAt, account.FieldRateLimitResetAt, account.FieldOverloadUntil, account.FieldTempUnschedulableUntil, account.FieldSessionWindowStart, account.FieldSessionWindowEnd:
 			values[i] = new(sql.NullTime)
@@ -248,6 +270,12 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.Type = value.String
 			}
+		case account.FieldAccountScope:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field account_scope", values[i])
+			} else if value.Valid {
+				_m.AccountScope = value.String
+			}
 		case account.FieldCredentials:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field credentials", values[i])
@@ -283,12 +311,6 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field concurrency", values[i])
 			} else if value.Valid {
 				_m.Concurrency = int(value.Int64)
-			}
-		case account.FieldRateLimit429RetryCount:
-			if value, ok := values[i].(*sql.NullInt64); !ok {
-				return fmt.Errorf("unexpected type %T for field rate_limit_429_retry_count", values[i])
-			} else if value.Valid {
-				_m.RateLimit429RetryCount = int(value.Int64)
 			}
 		case account.FieldLoadFactor:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -440,6 +462,11 @@ func (_m *Account) QueryProxy() *ProxyQuery {
 	return NewAccountClient(_m.config).QueryProxy(_m)
 }
 
+// QueryProxies queries the "proxies" edge of the Account entity.
+func (_m *Account) QueryProxies() *ProxyQuery {
+	return NewAccountClient(_m.config).QueryProxies(_m)
+}
+
 // QueryParent queries the "parent" edge of the Account entity.
 func (_m *Account) QueryParent() *AccountQuery {
 	return NewAccountClient(_m.config).QueryParent(_m)
@@ -458,6 +485,11 @@ func (_m *Account) QueryUsageLogs() *UsageLogQuery {
 // QueryAccountGroups queries the "account_groups" edge of the Account entity.
 func (_m *Account) QueryAccountGroups() *AccountGroupQuery {
 	return NewAccountClient(_m.config).QueryAccountGroups(_m)
+}
+
+// QueryAccountProxies queries the "account_proxies" edge of the Account entity.
+func (_m *Account) QueryAccountProxies() *AccountProxyQuery {
+	return NewAccountClient(_m.config).QueryAccountProxies(_m)
 }
 
 // Update returns a builder for updating this Account.
@@ -508,6 +540,9 @@ func (_m *Account) String() string {
 	builder.WriteString("type=")
 	builder.WriteString(_m.Type)
 	builder.WriteString(", ")
+	builder.WriteString("account_scope=")
+	builder.WriteString(_m.AccountScope)
+	builder.WriteString(", ")
 	builder.WriteString("credentials=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Credentials))
 	builder.WriteString(", ")
@@ -526,9 +561,6 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("concurrency=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Concurrency))
-	builder.WriteString(", ")
-	builder.WriteString("rate_limit_429_retry_count=")
-	builder.WriteString(fmt.Sprintf("%v", _m.RateLimit429RetryCount))
 	builder.WriteString(", ")
 	if v := _m.LoadFactor; v != nil {
 		builder.WriteString("load_factor=")

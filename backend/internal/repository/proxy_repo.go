@@ -2,13 +2,18 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"sort"
 	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -18,15 +23,34 @@ import (
 
 // sqlQuerier 已替换为 sqlExecutor（定义在 group_repo.go），
 // proxyRepository 使用同一接口以支持 ExecContext。
+var processSharedProxyKey []byte
+
 type proxyRepository struct {
-	client *dbent.Client
-	sql    sqlExecutor
+	client              *dbent.Client
+	sql                 sqlExecutor
+	sharedKey           []byte
+	sharedKeyConfigured bool
 }
 
 const proxyProbeOutboxAccountChunkSize = 500
 
-func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB) service.ProxyRepository {
-	return newProxyRepositoryWithSQL(client, sqlDB)
+func NewProxyRepository(client *dbent.Client, sqlDB *sql.DB, cfg *config.Config) service.ProxyRepository {
+	r := newProxyRepositoryWithSQL(client, sqlDB)
+	keyMaterial := ""
+	if cfg != nil {
+		keyMaterial = cfg.Totp.EncryptionKey
+	}
+	if decoded, err := hex.DecodeString(keyMaterial); err == nil && len(decoded) == payment.AES256KeySize {
+		r.sharedKey = decoded
+		r.sharedKeyConfigured = cfg != nil && cfg.Totp.EncryptionKeyConfigured
+		processSharedProxyKey = decoded
+	} else {
+		h := sha256.Sum256([]byte("sub2api:shared-proxy:" + keyMaterial))
+		r.sharedKey = h[:]
+		r.sharedKeyConfigured = false
+		processSharedProxyKey = h[:]
+	}
+	return r
 }
 
 func newProxyRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *proxyRepository {
@@ -42,11 +66,25 @@ func (r *proxyRepository) Create(ctx context.Context, proxyIn *service.Proxy) er
 		SetStatus(proxyIn.Status).
 		SetFallbackMode(proxyIn.FallbackMode).
 		SetExpiryWarnDays(proxyIn.ExpiryWarnDays)
-	if proxyIn.Username != "" {
-		builder.SetUsername(proxyIn.Username)
-	}
-	if proxyIn.Password != "" {
-		builder.SetPassword(proxyIn.Password)
+	if proxyIn.OwnerUserID != nil {
+		if !r.sharedKeyConfigured {
+			return errors.New("shared proxy encryption key is not configured")
+		}
+		builder.SetOwnerUserID(*proxyIn.OwnerUserID)
+		if proxyIn.Username != "" || proxyIn.Password != "" {
+			ciphertext, err := encryptSharedProxyCredentials(r.sharedKey, proxyIn.Username, proxyIn.Password)
+			if err != nil {
+				return err
+			}
+			builder.SetPassword(ciphertext)
+		}
+	} else {
+		if proxyIn.Username != "" {
+			builder.SetUsername(proxyIn.Username)
+		}
+		if proxyIn.Password != "" {
+			builder.SetPassword(proxyIn.Password)
+		}
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -156,15 +194,27 @@ func updateProxyAndInvalidateProbeSnapshots(ctx context.Context, client *dbent.C
 		SetStatus(proxyIn.Status).
 		SetFallbackMode(proxyIn.FallbackMode).
 		SetExpiryWarnDays(proxyIn.ExpiryWarnDays)
-	if proxyIn.Username != "" {
-		builder.SetUsername(proxyIn.Username)
+	if proxyIn.OwnerUserID != nil {
+		if proxyIn.Username != "" || proxyIn.Password != "" {
+			ciphertext, err := encryptSharedProxyCredentials(processSharedProxyKey, proxyIn.Username, proxyIn.Password)
+			if err != nil {
+				return nil, err
+			}
+			builder.ClearUsername().SetPassword(ciphertext)
+		} else {
+			builder.ClearUsername().ClearPassword()
+		}
 	} else {
-		builder.ClearUsername()
-	}
-	if proxyIn.Password != "" {
-		builder.SetPassword(proxyIn.Password)
-	} else {
-		builder.ClearPassword()
+		if proxyIn.Username != "" {
+			builder.SetUsername(proxyIn.Username)
+		} else {
+			builder.ClearUsername()
+		}
+		if proxyIn.Password != "" {
+			builder.SetPassword(proxyIn.Password)
+		} else {
+			builder.ClearPassword()
+		}
 	}
 	if proxyIn.ExpiresAt != nil {
 		builder.SetExpiresAt(*proxyIn.ExpiresAt)
@@ -472,7 +522,7 @@ func (r *proxyRepository) ExistsByHostPortAuth(ctx context.Context, host string,
 // CountAccountsByProxyID returns the number of accounts using a specific proxy
 func (r *proxyRepository) CountAccountsByProxyID(ctx context.Context, proxyID int64) (int64, error) {
 	var count int64
-	if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM accounts WHERE proxy_id = $1 AND deleted_at IS NULL", []any{proxyID}, &count); err != nil {
+	if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM accounts WHERE (proxy_id = $1 OR id IN (SELECT account_id FROM account_proxies WHERE proxy_id = $1)) AND deleted_at IS NULL", []any{proxyID}, &count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -482,7 +532,7 @@ func (r *proxyRepository) ListAccountSummariesByProxyID(ctx context.Context, pro
 	rows, err := r.sql.QueryContext(ctx, `
 		SELECT id, name, platform, type, notes
 		FROM accounts
-		WHERE proxy_id = $1 AND deleted_at IS NULL
+		WHERE (proxy_id = $1 OR id IN (SELECT account_id FROM account_proxies WHERE proxy_id = $1)) AND deleted_at IS NULL
 		ORDER BY id DESC
 	`, proxyID)
 	if err != nil {
@@ -522,7 +572,7 @@ func (r *proxyRepository) ListAccountSummariesByProxyID(ctx context.Context, pro
 
 // GetAccountCountsForProxies returns a map of proxy ID to account count for all proxies
 func (r *proxyRepository) GetAccountCountsForProxies(ctx context.Context) (counts map[int64]int64, err error) {
-	rows, err := r.sql.QueryContext(ctx, "SELECT proxy_id, COUNT(*) AS count FROM accounts WHERE proxy_id IS NOT NULL AND deleted_at IS NULL GROUP BY proxy_id")
+	rows, err := r.sql.QueryContext(ctx, "SELECT proxy_id, COUNT(*) AS count FROM (SELECT id, proxy_id FROM accounts WHERE proxy_id IS NOT NULL AND deleted_at IS NULL UNION SELECT a.id, ap.proxy_id FROM accounts a JOIN account_proxies ap ON ap.account_id=a.id WHERE a.deleted_at IS NULL) bindings GROUP BY proxy_id")
 	if err != nil {
 		return nil, err
 	}
@@ -585,6 +635,7 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 	}
 	out := &service.Proxy{
 		ID:             m.ID,
+		OwnerUserID:    m.OwnerUserID,
 		Name:           m.Name,
 		Protocol:       m.Protocol,
 		Host:           m.Host,
@@ -597,11 +648,18 @@ func proxyEntityToService(m *dbent.Proxy) *service.Proxy {
 		BackupProxyID:  m.BackupProxyID,
 		ExpiryWarnDays: m.ExpiryWarnDays,
 	}
-	if m.Username != nil {
-		out.Username = *m.Username
-	}
-	if m.Password != nil {
-		out.Password = *m.Password
+	if m.OwnerUserID != nil {
+		out.OwnerUserID = m.OwnerUserID
+		if m.Password != nil {
+			out.Username, out.Password = decryptSharedProxyCredentials(*m.Password, processSharedProxyKey)
+		}
+	} else {
+		if m.Username != nil {
+			out.Username = *m.Username
+		}
+		if m.Password != nil {
+			out.Password = *m.Password
+		}
 	}
 	return out
 }
@@ -753,7 +811,7 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND deleted_at IS NULL
+			WHERE proxy_id=$1 AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM account_proxies ap WHERE ap.account_id=accounts.id)
 			RETURNING id`, proxyID)
 	} else {
 		rows, err = exec.QueryContext(ctx, `
@@ -764,7 +822,7 @@ func (r *proxyRepository) sweepOneExpiredProxyOnExec(ctx context.Context, exec s
 					ELSE extra
 				END,
 				updated_at=NOW()
-			WHERE proxy_id=$1 AND deleted_at IS NULL
+			WHERE proxy_id=$1 AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM account_proxies ap WHERE ap.account_id=accounts.id)
 			RETURNING id`, proxyID, *target)
 	}
 	if err != nil {
@@ -807,4 +865,26 @@ func (r *proxyRepository) CountExpiringSoon(ctx context.Context, now time.Time) 
 		  AND expires_at > $2 AND expires_at <= $2 + (expiry_warn_days || ' days')::interval`,
 		[]any{service.StatusActive, now}, &c)
 	return c, err
+}
+
+func encryptSharedProxyCredentials(key []byte, username, password string) (string, error) {
+	ciphertext, err := payment.Encrypt(username+"\x00"+password, key)
+	if err != nil {
+		return "", err
+	}
+	return "spx1:" + ciphertext, nil
+}
+func decryptSharedProxyCredentials(value string, key []byte) (string, string) {
+	if !strings.HasPrefix(value, "spx1:") {
+		return "", value
+	}
+	plaintext, err := payment.Decrypt(strings.TrimPrefix(value, "spx1:"), key)
+	if err != nil {
+		return "", ""
+	}
+	parts := strings.SplitN(plaintext, "\x00", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return parts[0], parts[1]
 }

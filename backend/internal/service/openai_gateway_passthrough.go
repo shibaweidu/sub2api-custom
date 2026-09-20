@@ -135,6 +135,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	reqStream bool,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
+	defer releaseStagedCodexFingerprintLease(c)
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
 	if isOpenAIResponsesCompactPath(c) {
@@ -198,7 +199,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
 			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders, s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIAccountUniqueFingerprintEnabled)
+			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
 			if fpIDs != nil {
 				fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
 				if fpErr != nil {
@@ -386,10 +387,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			// passthrough error handling sees the same response after recovery fails.
 			probeBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
-			if retryErr := s.newCodexPreOutputRetryError(c, account, resp.StatusCode, resp.Header, probeBody, extractUpstreamErrorMessage(probeBody)); retryErr != nil {
-				return nil, retryErr
-			}
-			resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(probeBody)))
+			resp.Body = io.NopCloser(bytes.NewReader(probeBody))
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, probeBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize passthrough rejected Responses field retry body: %w", retryErr)
 			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
@@ -585,7 +583,6 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, error) {
-	body = s.prepareCodexQuotaOverdraftBody(ctx, account, isOpenAIResponsesCompactPath(c), body)
 	targetURL := openaiPlatformAPIURL
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -635,6 +632,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// 客户端回带的 x-codex-turn-state 若已知由其他账号铸造（failover 换号），
 	// 剥离后再出站（openai_codex_turn_state.go）。
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
+	if err := s.applyOpenAICodexTicket(ctx, account, extractOpenAICodexTicketModel(body), req.Header); err != nil {
+		return nil, err
+	}
 
 	// 覆盖入站鉴权残留，并注入上游认证
 	req.Header.Del("authorization")
@@ -725,7 +725,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
-	applyOpenCodeSessionHeader(c, account, targetURL, req.Header)
+	applyOpenCodeSessionHeader(c, account, targetURL, req.Header, body)
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
@@ -769,6 +769,9 @@ func stripOpenAILegacyResponsesBeta(headers http.Header) {
 func shouldFailoverOpenAIPassthroughResponse(account *Account, statusCode int, responseBody []byte) bool {
 	if hit, _, _ := detectOpenAICyberPolicy(responseBody); hit {
 		return false
+	}
+	if IsUpstreamBillingError(statusCode, responseBody) {
+		return true
 	}
 	if isOpenAIContextWindowError("", responseBody) {
 		return false
@@ -913,7 +916,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		Detail:               upstreamDetail,
 		UpstreamResponseBody: upstreamDetail,
 	})
-	return finalizeAccount429Failover(resp, s.newOpenAIAccountFailoverError(
+	return s.newOpenAIAccountFailoverError(
 		account,
 		resp.StatusCode,
 		resp.Header,
@@ -921,7 +924,7 @@ func (s *OpenAIGatewayService) handleFailoverErrorResponsePassthrough(
 		upstreamMsg,
 		shouldDisable,
 		!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-	))
+	)
 }
 
 func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
@@ -1374,6 +1377,13 @@ func openAIStreamFailedEventSemanticStatus(payload []byte, message string) int {
 	if isOpenAIContextWindowError(message, payload) {
 		return http.StatusBadRequest
 	}
+	// Responses/WebSocket terminal events arrive inside HTTP 200. A structured
+	// billing code is an account failure, not a user request error; assign the
+	// explicit payment-required status so account failover and health handling
+	// do not treat it as a generic 502.
+	if IsUpstreamBillingError(http.StatusOK, payload) {
+		return http.StatusPaymentRequired
+	}
 
 	code := openAIStreamFailedEventErrorCode(payload)
 	errType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.type").String()))
@@ -1411,7 +1421,7 @@ func openAIStreamFailureStatus(payload []byte, message string) int {
 	}
 	semanticStatus := openAIStreamFailedEventSemanticStatus(payload, message)
 	switch semanticStatus {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, 529:
+	case http.StatusPaymentRequired, http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, 529:
 		return semanticStatus
 	case http.StatusServiceUnavailable:
 		if isOpenAIUpstreamCapacityShedEvent(payload) {
@@ -1531,6 +1541,9 @@ func openAIStreamFailedEventShouldFailover(payload []byte, message string) bool 
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
+	if IsUpstreamBillingError(openAIStreamFailureStatus(payload, message), payload) {
+		return true
+	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
@@ -1583,6 +1596,9 @@ func openAIStreamErrorEventShouldFailover(payload []byte, message string) bool {
 	if hit, _, _ := detectOpenAICyberPolicy(payload); hit {
 		return false
 	}
+	if IsUpstreamBillingError(openAIStreamFailureStatus(payload, message), payload) {
+		return true
+	}
 	if isOpenAIContextWindowError(message, payload) {
 		return false
 	}
@@ -1615,6 +1631,14 @@ func (s *OpenAIGatewayService) handleOpenAIStreamTerminalAccountSideEffects(
 	canonicalModel ...string,
 ) (int, bool) {
 	statusCode := openAIStreamFailureStatus(payload, message)
+	if IsUpstreamBillingError(statusCode, payload) {
+		ctx := context.Background()
+		if c != nil && c.Request != nil {
+			ctx = c.Request.Context()
+		}
+		model := firstNonEmpty(canonicalModel...)
+		return statusCode, s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, headers, payload, model)
+	}
 	switch statusCode {
 	case http.StatusForbidden:
 		if !openAIStream403AccountFailure(payload, message) {
@@ -1759,6 +1783,7 @@ func (s *OpenAIGatewayService) newOpenAIStreamFailoverErrorWithModel(
 		classificationHeaders = nil
 	}
 	failoverErr := s.newOpenAIAccountFailoverErrorWithClassificationHeaders(account, statusCode, headers, classificationHeaders, payload, message, shouldDisable, retryableOnSameAccount)
+	failoverErr.ConfiguredRetryUnsafe = upstreamErrorRetryHasUsage(payload)
 	if failoverErr.IsCredentialFailure() || failoverErr.RequestScopedTransient {
 		return failoverErr
 	}
@@ -1807,10 +1832,16 @@ func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
 	terminalType string,
 	payload []byte,
 	message string,
+	usage *OpenAIUsage,
 	canonicalModel ...string,
 ) *UpstreamFailoverError {
 	if account == nil || IsResponseCommitted(c) {
 		return nil
+	}
+	if hit, _, _ := detectOpenAICyberPolicy(payload); !hit && c != nil && c.Request != nil {
+		if retryFailure := configuredOpenAIStreamRetryFailure(c.Request.Context(), payload, message, usage); retryFailure != nil {
+			return retryFailure
+		}
 	}
 	shouldFailover := openAIStreamFailedEventShouldFailover(payload, message)
 	if terminalType == "error" {
@@ -1825,7 +1856,35 @@ func (s *OpenAIGatewayService) nonStreamingTerminalFailureFailover(
 		headers = resp.Header
 		upstreamRequestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
 	}
-	return s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, upstreamRequestID, payload, message, firstNonEmpty(canonicalModel...), headers)
+	failure := s.newOpenAIStreamFailoverErrorWithModel(c, account, passthrough, upstreamRequestID, payload, message, firstNonEmpty(canonicalModel...), headers)
+	failure.ConfiguredRetryUnsafe = failure.ConfiguredRetryUnsafe || openAIUsageHasTokens(usage)
+	return failure
+}
+
+func (s *OpenAIGatewayService) nonStreamingJSONBillingError(
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	model string,
+	passthrough bool,
+) error {
+	message := firstStructuredUpstreamBillingMessage(body)
+	if message == "" {
+		message = "Upstream account billing failed"
+	}
+	if account != nil {
+		failure := s.newOpenAIStreamFailoverErrorWithModel(
+			c, account, passthrough, resp.Header.Get("x-request-id"), body, message, model, resp.Header,
+		)
+		if !IsResponseCommitted(c) {
+			// Keep the provider evidence available to internal failover/Ops handling.
+			// The billing reason overrides all client-facing passthrough rules.
+			failure.ResponseBody = append([]byte(nil), body...)
+			return failure
+		}
+	}
+	return s.writeOpenAINonStreamingProtocolError(resp, c, UpstreamBillingExhaustedClientMessage)
 }
 
 func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
@@ -1841,23 +1900,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	retrySettings, _ := c.Get(codexRetrySettingsContextKey)
-	_, stageRetryHeaders := retrySettings.(CodexPreOutputRetrySettings)
-	applyAttemptHeaders := func() {
-		if !c.Writer.Written() {
-			writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-		}
-	}
-	if !stageRetryHeaders {
-		applyAttemptHeaders()
-	}
+	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
 	// SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" && !stageRetryHeaders {
+	if v := resp.Header.Get("x-request-id"); v != "" {
 		c.Header("x-request-id", v)
 	}
 
@@ -1942,7 +1992,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	}
 	defer flushPendingOutput()
 	writePendingLines := func() bool {
-		applyAttemptHeaders()
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
 				clientDisconnected = true
@@ -2101,8 +2150,11 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					}
 				}
 				if !outputStarted {
-					if retryErr := s.newCodexPreOutputRetrySSEError(c, account, resp, dataBytes, eventType, failedMessage); retryErr != nil {
-						return resultWithUsage(), retryErr
+					if !cyberHit {
+						if retryFailure := configuredOpenAIStreamRetryFailure(ctx, dataBytes, failedMessage, usage); retryFailure != nil {
+							s.recordOpenAIStreamUpstreamError(c, account, true, upstreamRequestID, "retry", dataBytes, failedMessage)
+							return resultWithUsage(), retryFailure
+						}
 					}
 					shouldFailover := false
 					if !cyberHit {
@@ -2113,8 +2165,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						}
 					}
 					if shouldFailover {
-						return resultWithUsage(),
-							s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+						failure := s.newOpenAIStreamFailoverErrorWithModel(c, account, true, upstreamRequestID, dataBytes, failedMessage, mappedModel, resp.Header)
+						failure.ConfiguredRetryUnsafe = failure.ConfiguredRetryUnsafe || openAIUsageHasTokens(usage)
+						return resultWithUsage(), failure
 					}
 					if !cyberHit && !sawBareError {
 						if status, errType, errMsg, matched := applyOpenAIStreamFailedErrorPassthroughRule(c, account.Platform, dataBytes, failedMessage); matched {
@@ -2196,7 +2249,6 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			// 建立 happens-before —— 之后 ResponseWriter 由本循环独占。
 			if !clientOutputStarted {
 				stopKeepalive()
-				applyAttemptHeaders()
 			}
 			if !clientOutputStarted && len(pendingLines) > 0 {
 				if !writePendingLines() {
@@ -2308,6 +2360,9 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if isEventStreamResponse(resp.Header) {
 		return s.handlePassthroughSSEToJSON(resp, c, account, body, originalModel, mappedModel)
 	}
+	if IsUpstreamBillingError(resp.StatusCode, body) {
+		return nil, s.nonStreamingJSONBillingError(resp, c, account, body, mappedModel, true)
+	}
 
 	usage := &OpenAIUsage{}
 	usageParsed := false
@@ -2368,7 +2423,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 		if compactErr := newOpenAICompactFallbackSignal(c, terminalPayload, msg); compactErr != nil {
 			return nil, compactErr
 		}
-		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, mappedModel); failoverErr != nil {
+		if failoverErr := s.nonStreamingTerminalFailureFailover(c, resp, account, true, terminalType, terminalPayload, msg, s.parseSSEUsageFromBody(bodyText), mappedModel); failoverErr != nil {
 			return nil, failoverErr
 		}
 		return nil, s.writeOpenAINonStreamingProtocolError(resp, c, msg)

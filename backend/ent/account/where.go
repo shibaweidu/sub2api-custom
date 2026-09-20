@@ -90,6 +90,11 @@ func Type(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldType, v))
 }
 
+// AccountScope applies equality check predicate on the "account_scope" field. It's identical to AccountScopeEQ.
+func AccountScope(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAccountScope, v))
+}
+
 // ProxyID applies equality check predicate on the "proxy_id" field. It's identical to ProxyIDEQ.
 func ProxyID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
@@ -103,11 +108,6 @@ func ProxyFallbackOriginID(v int64) predicate.Account {
 // Concurrency applies equality check predicate on the "concurrency" field. It's identical to ConcurrencyEQ.
 func Concurrency(v int) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldConcurrency, v))
-}
-
-// RateLimit429RetryCount applies equality check predicate on the "rate_limit_429_retry_count" field. It's identical to RateLimit429RetryCountEQ.
-func RateLimit429RetryCount(v int) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldRateLimit429RetryCount, v))
 }
 
 // LoadFactor applies equality check predicate on the "load_factor" field. It's identical to LoadFactorEQ.
@@ -600,6 +600,71 @@ func TypeContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldType, v))
 }
 
+// AccountScopeEQ applies the EQ predicate on the "account_scope" field.
+func AccountScopeEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldAccountScope, v))
+}
+
+// AccountScopeNEQ applies the NEQ predicate on the "account_scope" field.
+func AccountScopeNEQ(v string) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldAccountScope, v))
+}
+
+// AccountScopeIn applies the In predicate on the "account_scope" field.
+func AccountScopeIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldAccountScope, vs...))
+}
+
+// AccountScopeNotIn applies the NotIn predicate on the "account_scope" field.
+func AccountScopeNotIn(vs ...string) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldAccountScope, vs...))
+}
+
+// AccountScopeGT applies the GT predicate on the "account_scope" field.
+func AccountScopeGT(v string) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldAccountScope, v))
+}
+
+// AccountScopeGTE applies the GTE predicate on the "account_scope" field.
+func AccountScopeGTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldAccountScope, v))
+}
+
+// AccountScopeLT applies the LT predicate on the "account_scope" field.
+func AccountScopeLT(v string) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldAccountScope, v))
+}
+
+// AccountScopeLTE applies the LTE predicate on the "account_scope" field.
+func AccountScopeLTE(v string) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldAccountScope, v))
+}
+
+// AccountScopeContains applies the Contains predicate on the "account_scope" field.
+func AccountScopeContains(v string) predicate.Account {
+	return predicate.Account(sql.FieldContains(FieldAccountScope, v))
+}
+
+// AccountScopeHasPrefix applies the HasPrefix predicate on the "account_scope" field.
+func AccountScopeHasPrefix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasPrefix(FieldAccountScope, v))
+}
+
+// AccountScopeHasSuffix applies the HasSuffix predicate on the "account_scope" field.
+func AccountScopeHasSuffix(v string) predicate.Account {
+	return predicate.Account(sql.FieldHasSuffix(FieldAccountScope, v))
+}
+
+// AccountScopeEqualFold applies the EqualFold predicate on the "account_scope" field.
+func AccountScopeEqualFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldEqualFold(FieldAccountScope, v))
+}
+
+// AccountScopeContainsFold applies the ContainsFold predicate on the "account_scope" field.
+func AccountScopeContainsFold(v string) predicate.Account {
+	return predicate.Account(sql.FieldContainsFold(FieldAccountScope, v))
+}
+
 // ProxyIDEQ applies the EQ predicate on the "proxy_id" field.
 func ProxyIDEQ(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
@@ -718,46 +783,6 @@ func ConcurrencyLT(v int) predicate.Account {
 // ConcurrencyLTE applies the LTE predicate on the "concurrency" field.
 func ConcurrencyLTE(v int) predicate.Account {
 	return predicate.Account(sql.FieldLTE(FieldConcurrency, v))
-}
-
-// RateLimit429RetryCountEQ applies the EQ predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountEQ(v int) predicate.Account {
-	return predicate.Account(sql.FieldEQ(FieldRateLimit429RetryCount, v))
-}
-
-// RateLimit429RetryCountNEQ applies the NEQ predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountNEQ(v int) predicate.Account {
-	return predicate.Account(sql.FieldNEQ(FieldRateLimit429RetryCount, v))
-}
-
-// RateLimit429RetryCountIn applies the In predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountIn(vs ...int) predicate.Account {
-	return predicate.Account(sql.FieldIn(FieldRateLimit429RetryCount, vs...))
-}
-
-// RateLimit429RetryCountNotIn applies the NotIn predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountNotIn(vs ...int) predicate.Account {
-	return predicate.Account(sql.FieldNotIn(FieldRateLimit429RetryCount, vs...))
-}
-
-// RateLimit429RetryCountGT applies the GT predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountGT(v int) predicate.Account {
-	return predicate.Account(sql.FieldGT(FieldRateLimit429RetryCount, v))
-}
-
-// RateLimit429RetryCountGTE applies the GTE predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountGTE(v int) predicate.Account {
-	return predicate.Account(sql.FieldGTE(FieldRateLimit429RetryCount, v))
-}
-
-// RateLimit429RetryCountLT applies the LT predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountLT(v int) predicate.Account {
-	return predicate.Account(sql.FieldLT(FieldRateLimit429RetryCount, v))
-}
-
-// RateLimit429RetryCountLTE applies the LTE predicate on the "rate_limit_429_retry_count" field.
-func RateLimit429RetryCountLTE(v int) predicate.Account {
-	return predicate.Account(sql.FieldLTE(FieldRateLimit429RetryCount, v))
 }
 
 // LoadFactorEQ applies the EQ predicate on the "load_factor" field.
@@ -1696,6 +1721,29 @@ func HasProxyWith(preds ...predicate.Proxy) predicate.Account {
 	})
 }
 
+// HasProxies applies the HasEdge predicate on the "proxies" edge.
+func HasProxies() predicate.Account {
+	return predicate.Account(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2M, false, ProxiesTable, ProxiesPrimaryKey...),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasProxiesWith applies the HasEdge predicate on the "proxies" edge with a given conditions (other predicates).
+func HasProxiesWith(preds ...predicate.Proxy) predicate.Account {
+	return predicate.Account(func(s *sql.Selector) {
+		step := newProxiesStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // HasParent applies the HasEdge predicate on the "parent" edge.
 func HasParent() predicate.Account {
 	return predicate.Account(func(s *sql.Selector) {
@@ -1780,6 +1828,29 @@ func HasAccountGroups() predicate.Account {
 func HasAccountGroupsWith(preds ...predicate.AccountGroup) predicate.Account {
 	return predicate.Account(func(s *sql.Selector) {
 		step := newAccountGroupsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasAccountProxies applies the HasEdge predicate on the "account_proxies" edge.
+func HasAccountProxies() predicate.Account {
+	return predicate.Account(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, true, AccountProxiesTable, AccountProxiesColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasAccountProxiesWith applies the HasEdge predicate on the "account_proxies" edge with a given conditions (other predicates).
+func HasAccountProxiesWith(preds ...predicate.AccountProxy) predicate.Account {
+	return predicate.Account(func(s *sql.Selector) {
+		step := newAccountProxiesStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

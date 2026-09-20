@@ -73,16 +73,18 @@ type usageLogBestEffortWriter interface {
 
 // postUsageBillingParams 统一扣费所需的参数
 type postUsageBillingParams struct {
-	Cost                  *CostBreakdown
-	User                  *User
-	APIKey                *APIKey
-	Account               *Account
-	Subscription          *UserSubscription
-	RequestPayloadHash    string
-	IsSubscriptionBill    bool
-	AccountRateMultiplier float64
-	APIKeyService         APIKeyQuotaUpdater
-	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	Cost                        *CostBreakdown
+	User                        *User
+	APIKey                      *APIKey
+	Account                     *Account
+	Subscription                *UserSubscription
+	RequestPayloadHash          string
+	IsSubscriptionBill          bool
+	AccountRateMultiplier       float64
+	APIKeyService               APIKeyQuotaUpdater
+	Platform                    string // 来自 APIKey 关联 Group 的平台标识
+	SharedAccountFeeRatePercent *float64
+	SharedAccountFreezeHours    int
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -288,8 +290,19 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		AccountType:        p.Account.Type,
 		RequestPayloadHash: strings.TrimSpace(p.RequestPayloadHash),
 	}
+	if p.Account.AccountScope == "shared" && !p.IsSubscriptionBill {
+		rate := 10.0
+		if p.SharedAccountFeeRatePercent != nil {
+			rate = *p.SharedAccountFeeRatePercent
+		}
+		cmd.SharedAccountFeeRatePercent = &rate
+		cmd.SharedAccountFreezeHours = p.SharedAccountFreezeHours
+	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
+		if usageLog.DurationMs != nil {
+			cmd.DurationMS = *usageLog.DurationMs
+		}
 		cmd.BillingType = usageLog.BillingType
 		cmd.InputTokens = usageLog.InputTokens
 		cmd.OutputTokens = usageLog.OutputTokens
@@ -879,6 +892,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		pricingAt = timezone.Now()
 	}
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
+	if account.AccountScope == "shared" {
+		multiplier *= account.BillingRateMultiplier()
+		imageMultiplier *= account.BillingRateMultiplier()
+	}
 
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -990,17 +1007,25 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		}
 	}
 	requestID := usageLog.RequestID
+	var sharedFee *float64
+	sharedFreeze := 0
+	if s.settingService != nil {
+		v := s.settingService.GetSharedPoolFeeRatePercent(ctx)
+		sharedFee = &v
+	}
 	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
-		Cost:                  cost,
-		User:                  user,
-		APIKey:                apiKey,
-		Account:               account,
-		Subscription:          subscription,
-		RequestPayloadHash:    resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
-		IsSubscriptionBill:    isSubscriptionBilling,
-		AccountRateMultiplier: accountRateMultiplier,
-		APIKeyService:         input.APIKeyService,
-		Platform:              quotaPlatform,
+		Cost:                        cost,
+		User:                        user,
+		APIKey:                      apiKey,
+		Account:                     account,
+		Subscription:                subscription,
+		RequestPayloadHash:          resolveUsageBillingPayloadFingerprint(ctx, input.RequestPayloadHash),
+		IsSubscriptionBill:          isSubscriptionBilling,
+		AccountRateMultiplier:       accountRateMultiplier,
+		APIKeyService:               input.APIKeyService,
+		Platform:                    quotaPlatform,
+		SharedAccountFeeRatePercent: sharedFee,
+		SharedAccountFreezeHours:    sharedFreeze,
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {

@@ -11,6 +11,7 @@ import SettingsView from "../SettingsView.vue";
 const {
   getSettings,
   updateSettings,
+  testCodexTicketProxy,
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   getAdminApiKey,
@@ -39,6 +40,7 @@ const {
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
+  testCodexTicketProxy: vi.fn(),
   getWebSearchEmulationConfig: vi.fn(),
   updateWebSearchEmulationConfig: vi.fn(),
   getAdminApiKey: vi.fn(),
@@ -86,6 +88,7 @@ vi.mock("@/api", () => ({
     settings: {
       getSettings,
       updateSettings,
+      testCodexTicketProxy,
       getWebSearchEmulationConfig,
       updateWebSearchEmulationConfig,
       getAdminApiKey,
@@ -638,6 +641,7 @@ describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
     getSettings.mockReset();
     updateSettings.mockReset();
+    testCodexTicketProxy.mockReset().mockResolvedValue({ proxy_index: 1, success: true, exit_ip: "198.51.100.1", latency_ms: 50 });
     getWebSearchEmulationConfig.mockReset();
     updateWebSearchEmulationConfig.mockReset();
     getAdminApiKey.mockReset();
@@ -726,6 +730,99 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  it("loads and saves the multiline gateway harvest pool with masked rows preserved", async () => {
+    const storedPool = "http://user:***@old.example.com:8080\nsocks5h://user:***@other.example.com:1080";
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_ticket_enabled: true,
+      openai_codex_ticket_harvest_proxy_url: storedPool,
+      openai_codex_ticket_harvest_proxy_configured: true,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    expect(wrapper.find("#codex-ticket-enabled").exists()).toBe(true);
+    const input = wrapper.get<HTMLTextAreaElement>("#codex-ticket-harvest-proxy");
+    expect(input.element.tagName).toBe("TEXTAREA");
+    expect(input.element.value).toBe(storedPool);
+    const editedPool = storedPool + "\nhttp://new:password@third.example.com:8080";
+    await input.setValue(editedPool);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({
+      openai_codex_ticket_enabled: true,
+      openai_codex_ticket_harvest_proxy_url: editedPool,
+    });
+    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("openai_codex_ticket_harvest_proxy_configured");
+    wrapper.unmount();
+  });
+
+  it("submits an explicit empty pool when all harvest proxy lines are removed", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_ticket_enabled: true,
+      openai_codex_ticket_harvest_proxy_url: "http://user:***@old.example.com:8080",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    await wrapper.get("#codex-ticket-harvest-proxy").setValue("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]?.openai_codex_ticket_harvest_proxy_url).toBe("");
+    wrapper.unmount();
+  });
+
+  it("tests only saved proxy indices and updates the test snapshot after saving", async () => {
+    const storedPool = "http://user:***@old.example.com:8080";
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_proxy_url: storedPool, openai_codex_ticket_harvest_proxy_count: 1 });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const button = wrapper.get('[data-testid="codex-ticket-test-exit"]');
+    expect(button.attributes("disabled")).toBeUndefined();
+    await button.trigger("click");
+    await flushPromises();
+    expect(testCodexTicketProxy).toHaveBeenCalledWith(1, expect.any(AbortSignal));
+    const changedPool = storedPool + "\nhttp://new:password@new.example.com:8080";
+    await wrapper.get("#codex-ticket-harvest-proxy").setValue(changedPool);
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("codexTicketProxyTest.saveFirst");
+    const savedPool = storedPool + "\nhttp://new:***@new.example.com:8080";
+    updateSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_proxy_url: savedPool, openai_codex_ticket_harvest_proxy_count: 2 });
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(wrapper.get<HTMLTextAreaElement>("#codex-ticket-harvest-proxy").element.value).toBe(savedPool);
+    expect(button.attributes("disabled")).toBeUndefined();
+    expect(wrapper.findAll("#codex-ticket-proxy-index option")).toHaveLength(2);
+    wrapper.unmount();
+  });
+
+  it("loads and saves the open button visibility for each custom menu", async () => {
+    const menuItems = [
+      { id: "docs", label: "Docs", url: "https://example.com/docs", icon_svg: "", visibility: "user", sort_order: 0 },
+      { id: "help", label: "Help", url: "https://example.com/help", icon_svg: "", visibility: "user", sort_order: 1, hide_open_button: true },
+    ];
+    getSettings.mockResolvedValue({ ...baseSettingsResponse, custom_menu_items: menuItems });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggles = wrapper.findAll<HTMLInputElement>('[data-testid="custom-menu-hide-open-button"]');
+    expect(toggles.map(toggle => toggle.element.checked)).toEqual([false, true]);
+    await toggles[0].setValue(true);
+    await toggles[1].setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      custom_menu_items: [
+        { ...menuItems[0], hide_open_button: true },
+        { ...menuItems[1], hide_open_button: false },
+      ],
+    }));
+    wrapper.unmount();
   });
 
   it("submits the compact home page toggle", async () => {
@@ -1370,6 +1467,43 @@ describe("admin SettingsView payment visible method controls", () => {
     const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(payload.grok_default_text_model).toBe("grok-custom-text");
     expect(payload.grok_cross_client_model_map_enabled).toBe(false);
+  });
+
+  it("loads and saves multiline upstream error message matching rules", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      upstream_error_retry: { enabled: true, max_retries: 2, delay_ms: 500, errors: "503\ncurrently overloaded" },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const rules = wrapper.get('[data-testid="upstream-error-retry-errors"]');
+    expect((rules.element as HTMLTextAreaElement).value).toBe("503\ncurrently overloaded");
+    await rules.setValue("503\nOur servers are currently overloaded\n服务繁忙");
+    await wrapper.get('[data-testid="upstream-error-retry-max"]').setValue(4);
+    await wrapper.get('[data-testid="upstream-error-retry-delay"]').setValue(1000);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls.at(-1)?.[0].upstream_error_retry).toEqual({
+      enabled: true, max_retries: 4, delay_ms: 1000, errors: "503\nOur servers are currently overloaded\n服务繁忙",
+    });
+    wrapper.unmount();
+  });
+
+  it("rejects enabled retries without rules and accepts saving disabled retries", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    await wrapper.get('[data-testid="upstream-error-retry-toggle"]').setValue(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalled();
+    await wrapper.get('[data-testid="upstream-error-retry-toggle"]').setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls.at(-1)?.[0].upstream_error_retry.enabled).toBe(false);
+    wrapper.unmount();
   });
 
   it("loads and saves the OpenAI Responses first-token metric mode", async () => {

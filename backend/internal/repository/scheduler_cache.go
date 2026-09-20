@@ -773,10 +773,6 @@ func decodeCachedAccount(val any) (*service.Account, error) {
 	if err := json.Unmarshal(payload, &account); err != nil {
 		return nil, err
 	}
-	// Older scheduler entries may contain the pool configuration only in Extra.
-	// Rebuild the typed fields on read so those entries remain usable until the
-	// next normal cache refresh.
-	account.SyncProxyPoolConfig()
 	return &account, nil
 }
 
@@ -867,14 +863,14 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 }
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
-	account.SyncProxyPoolConfig()
 	return service.Account{
 		ID:                      account.ID,
 		Name:                    account.Name,
 		Platform:                account.Platform,
 		Type:                    account.Type,
 		Concurrency:             account.Concurrency,
-		RateLimit429RetryCount:  account.RateLimit429RetryCount,
+		ProxyIDs:                append([]int64(nil), account.ProxyIDs...),
+		Proxies:                 account.Proxies,
 		LoadFactor:              account.LoadFactor,
 		Priority:                account.Priority,
 		RateMultiplier:          account.RateMultiplier,
@@ -893,9 +889,6 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		SessionWindowStatus:     account.SessionWindowStatus,
 		ParentAccountID:         account.ParentAccountID,
 		QuotaDimension:          account.QuotaDimension,
-		ProxyID:                 account.ProxyID,
-		ProxyPoolIDs:            append([]int64(nil), account.ProxyPoolIDs...),
-		ProxyPool:               append([]*service.Proxy(nil), account.ProxyPool...),
 		AccountGroups:           filterSchedulerAccountGroups(account.AccountGroups),
 		GroupIDs:                filterSchedulerGroupIDs(account.GroupIDs, account.AccountGroups),
 		Credentials:             filterSchedulerCredentials(account.Credentials),
@@ -963,7 +956,9 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	if len(credentials) == 0 {
 		return nil
 	}
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type"}
+	// Candidate-list admission evaluates the account override before hydrating
+	// the full account. Dropping it silently falls back to the platform threshold.
+	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "chatgpt_plan_type", "account_scheduling_threshold"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {
@@ -981,6 +976,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		return nil
 	}
 	keys := []string{
+		// Anthropic shared-window and Fable-only threshold checks run on this
+		// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
+		"session_window_utilization",
+		"passive_usage_7d_utilization",
+		"passive_usage_7d_reset",
+		"passive_usage_7d_oi_utilization",
+		"passive_usage_7d_oi_reset",
 		"quota_limit",
 		"quota_used",
 		"quota_daily_limit",
@@ -1025,6 +1027,10 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"codex_5h_reset_after_seconds",
 		"codex_7d_reset_after_seconds",
 		"codex_usage_updated_at",
+		// Account-scoped Codex ticket switches must survive scheduler snapshots. These
+		// are deliberately separate from ProxyIDs, which route business traffic.
+		service.OpenAICodexTicketEnabledExtraKey,
+		service.OpenAICodexTicketFailClosedExtraKey,
 		"auto_pause_5h_threshold",
 		"auto_pause_7d_threshold",
 		"auto_pause_5h_disabled",
@@ -1033,8 +1039,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
-		service.ProxyConcurrencyLimitEnabledExtraKey,
-		service.ProxyPoolIDsExtraKey,
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {

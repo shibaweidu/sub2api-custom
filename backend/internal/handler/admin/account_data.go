@@ -188,6 +188,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 	dataAccounts := make([]DataAccount, 0, len(accounts))
 	for i := range accounts {
 		acc := accounts[i]
+		extra := exportCodexTicketExtra(&acc)
 		var proxyKey *string
 		if acc.ProxyID != nil {
 			if key, ok := proxyKeyByID[*acc.ProxyID]; ok {
@@ -205,7 +206,7 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			Platform:           acc.Platform,
 			Type:               acc.Type,
 			Credentials:        acc.Credentials,
-			Extra:              acc.Extra,
+			Extra:              extra,
 			ProxyKey:           proxyKey,
 			Concurrency:        acc.Concurrency,
 			Priority:           acc.Priority,
@@ -318,8 +319,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 						Protocol:       proxy.Protocol,
 						Host:           proxy.Host,
 						Port:           proxy.Port,
-						Username:       proxy.Username,
-						Password:       proxy.Password,
+						Username:       &proxy.Username,
+						Password:       &proxy.Password,
 					})
 				}
 			}
@@ -394,8 +395,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 				Protocol:       created.Protocol,
 				Host:           created.Host,
 				Port:           created.Port,
-				Username:       created.Username,
-				Password:       created.Password,
+				Username:       &created.Username,
+				Password:       &created.Password,
 			})
 		}
 	}
@@ -431,6 +432,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			}
 		}
 
+		item.Extra = stripLegacyCodexTicketProxyExtra(item.Extra)
 		enrichCredentialsFromIDToken(&item)
 
 		accountInput := &service.CreateAccountInput{
@@ -574,19 +576,20 @@ func (h *AccountHandler) resolveExportProxies(ctx context.Context, accounts []se
 
 	seen := make(map[int64]struct{})
 	ids := make([]int64, 0)
-	for i := range accounts {
-		if accounts[i].ProxyID == nil {
-			continue
-		}
-		id := *accounts[i].ProxyID
+	appendID := func(id int64) {
 		if id <= 0 {
-			continue
+			return
 		}
 		if _, ok := seen[id]; ok {
-			continue
+			return
 		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
+	}
+	for i := range accounts {
+		if accounts[i].ProxyID != nil {
+			appendID(*accounts[i].ProxyID)
+		}
 	}
 	if len(ids) == 0 {
 		return []service.Proxy{}, nil

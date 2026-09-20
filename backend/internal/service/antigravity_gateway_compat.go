@@ -286,35 +286,72 @@ func (s *AntigravityGatewayService) buildAntigravityCompatGeminiBody(
 	return antigravity.TransformClaudeToGeminiWithOptions(claudeRequest, projectID, mappedModel, options)
 }
 
+// enableMixedGeminiToolInvocations reconciles Antigravity v1internal tool payloads.
+//
+// Antigravity's cloudcode-pa v1internal endpoint rejects mixing built-in tools
+// (googleSearch / codeExecution) with client functionDeclarations — even when
+// includeServerSideToolInvocations is set (issue #6464). Prefer client function
+// tools (Codex/agent workflows) and drop the incompatible built-ins.
 func enableMixedGeminiToolInvocations(body []byte) ([]byte, error) {
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, err
 	}
 
-	var hasGoogleSearch, hasFunctionDeclarations bool
-	if tools, ok := request["tools"].([]any); ok {
-		for _, rawTool := range tools {
-			tool, ok := rawTool.(map[string]any)
-			if !ok {
-				continue
-			}
-			_, hasSearch := tool["googleSearch"]
-			declarations, hasFunctions := tool["functionDeclarations"].([]any)
-			hasGoogleSearch = hasGoogleSearch || hasSearch
-			hasFunctionDeclarations = hasFunctionDeclarations || hasFunctions && len(declarations) > 0
-		}
-	}
-	if !hasGoogleSearch || !hasFunctionDeclarations {
+	tools, ok := request["tools"].([]any)
+	if !ok || len(tools) == 0 {
 		return body, nil
 	}
 
-	toolConfig, _ := request["toolConfig"].(map[string]any)
-	if toolConfig == nil {
-		toolConfig = make(map[string]any)
-		request["toolConfig"] = toolConfig
+	hasFunctionDeclarations := false
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		declarations, hasFunctions := tool["functionDeclarations"].([]any)
+		if hasFunctions && len(declarations) > 0 {
+			hasFunctionDeclarations = true
+			break
+		}
 	}
-	toolConfig["includeServerSideToolInvocations"] = true
+	if !hasFunctionDeclarations {
+		return body, nil
+	}
+
+	filtered := make([]any, 0, len(tools))
+	droppedBuiltin := false
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			filtered = append(filtered, rawTool)
+			continue
+		}
+		if _, hasSearch := tool["googleSearch"]; hasSearch {
+			delete(tool, "googleSearch")
+			droppedBuiltin = true
+		}
+		if _, hasCodeExecution := tool["codeExecution"]; hasCodeExecution {
+			delete(tool, "codeExecution")
+			droppedBuiltin = true
+		}
+		if len(tool) == 0 {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	if !droppedBuiltin {
+		return body, nil
+	}
+
+	request["tools"] = filtered
+	if toolConfig, ok := request["toolConfig"].(map[string]any); ok {
+		delete(toolConfig, "includeServerSideToolInvocations")
+		delete(toolConfig, "include_server_side_tool_invocations")
+		if len(toolConfig) == 0 {
+			delete(request, "toolConfig")
+		}
+	}
 	return json.Marshal(request)
 }
 
@@ -422,7 +459,7 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 		"",
 		false,
 	)
-	if s.shouldFailoverUpstreamError(resp.StatusCode) {
+	if s.shouldFailoverUpstreamError(resp.StatusCode) || IsUpstreamBillingError(resp.StatusCode, body) {
 		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(body)))
 		event := OpsUpstreamErrorEvent{
 			ProxyID:            opsUpstreamProxyID(account),
@@ -444,11 +481,14 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 			return antigravityCredentialRejectedError(resp, body)
 		}
 		appendOpsUpstreamError(c, event)
-		return finalizeAccount429Failover(resp, &UpstreamFailoverError{
+		if IsUpstreamBillingError(resp.StatusCode, body) {
+			return newUpstreamBillingFailoverError(resp.StatusCode, resp.Header, body, false)
+		}
+		return &UpstreamFailoverError{
 			StatusCode:      resp.StatusCode,
 			ResponseBody:    body,
 			ResponseHeaders: resp.Header.Clone(),
-		})
+		}
 	}
 	return s.writeMappedAntigravityCompatError(c, account, resp.StatusCode, resp.Header.Get("x-request-id"), body)
 }

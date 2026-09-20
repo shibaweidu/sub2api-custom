@@ -33,9 +33,9 @@ const (
 	updateCacheKey        = "update_check_cache"
 	updateCacheTTL        = 1200 // 20 minutes
 	githubRepo            = "DeanZFC/sub2api-custom"
-	githubSourceBranch    = "codex/merge-official-0.2.2"
+	githubSourceBranch    = "sub2api-custom"
 	githubForkVersionFile = "FORK_VERSION"
-	githubSourceUpdateURL = "https://github.com/DeanZFC/sub2api-custom/commits/codex/merge-official-0.2.2"
+	githubSourceUpdateURL = "https://github.com/DeanZFC/sub2api-custom/commits/sub2api-custom"
 	projectDisplayName    = "sub2api-custom"
 
 	// Security: allowed download domains for updates
@@ -177,15 +177,23 @@ type GitHubAsset struct {
 // CheckUpdate checks for available updates
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
 	// Try cache first
-	if !force {
+	if !force && githubRepo != "DeanZFC/sub2api-custom" {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
 			cached.SourceUpdateEnabled = s.sourceUpdateReady(ctx)
 			return cached, nil
 		}
 	}
 
-	// Fetch from GitHub
-	info, err := s.fetchLatestRelease(ctx)
+	// Custom deployments update from the tracked source branch. This must take
+	// precedence over GitHub Releases because custom versions are not required
+	// to publish a release tag for every build.
+	var info *UpdateInfo
+	var err error
+	if s.sourceUpdateReady(ctx) || githubRepo == "DeanZFC/sub2api-custom" {
+		info, err = s.fetchLatestSourceVersion(ctx)
+	} else {
+		info, err = s.fetchLatestRelease(ctx)
+	}
 	if err != nil {
 		// Return cached on error
 		if cached, cacheErr := s.getFromCache(ctx); cacheErr == nil && cached != nil {
@@ -212,6 +220,9 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	if s.buildType == "source" {
+		return ErrSourceBuildUpdateRequired
+	}
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err

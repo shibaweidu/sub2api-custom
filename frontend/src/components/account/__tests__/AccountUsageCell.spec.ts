@@ -20,7 +20,7 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string, params?: { length?: number }) => params?.length ? `${key} ${params.length}` : key
     })
   }
 })
@@ -104,6 +104,43 @@ describe('AccountUsageCell', () => {
         dispatchEvent: vi.fn(),
       }))
     })
+  })
+
+  it.each(['oauth', 'setup-token'] as const)('renders Codex ticket status for OpenAI %s accounts', async (type) => {
+    getUsage.mockResolvedValue({})
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: type === 'oauth' ? 9701 : 9702,
+          platform: 'openai',
+          type,
+          codex_turn_tickets: [
+            { model: 'gpt-6-astra', target_length: 332, ready: true, remaining_seconds: 2520, blocked: false },
+            { model: 'gpt-5.6-sol', target_length: 332, ready: false, remaining_seconds: 0, blocked: true, attempts: 3, last_length: 0, last_error_code: 'length_mismatch' },
+            { model: 'custom-model', target_length: 332, ready: false, remaining_seconds: 0, blocked: false },
+          ],
+        }),
+      },
+      global: { stubs: {
+        OpenAIQuotaResetCell: { template: '<div data-test="quota-reset" />' },
+        UsageProgressBar: true,
+        AccountQuotaInfo: true,
+      } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('42m00s')
+    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketPaused 332')
+    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketMissing 332')
+    expect(wrapper.get('[data-testid="codex-ticket-diagnostics"]').attributes('title')).toContain('codexTicketDiagnostics.length')
+    if (type === 'setup-token') {
+      expect(getUsage).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-test="quota-reset"]').exists()).toBe(false)
+    }
+    await wrapper.setProps({ account: { ...wrapper.props('account'), codex_ticket_config: { gateway_enabled: false, account_enabled: true, enabled: false, fail_closed: true, target_length: 332 } } })
+    expect(wrapper.text()).not.toContain('codexTurnTicket')
+    expect(wrapper.text()).not.toContain('42m00s')
+    expect(wrapper.find('[data-testid="codex-ticket-diagnostics"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 
   it('renders eligible Ollama Cloud state and forwards query updates', async () => {
@@ -316,7 +353,6 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('admin.accounts.aiCreditsBalance')
     expect(wrapper.text()).toContain('25')
   })
-
 
   it('OpenAI OAuth 快照已过期时首屏会重新请求 usage', async () => {
     getUsage.mockResolvedValue({
@@ -818,99 +854,6 @@ describe('AccountUsageCell', () => {
   expect(getUsage).toHaveBeenCalledWith(2004)
   expect(wrapper.text()).toContain('5h|100|106540000')
   expect(wrapper.text()).toContain('7d|100|106540000')
-  })
-
-  it('OpenAI OAuth 会显示单次确认的限额状态', async () => {
-    getUsage.mockResolvedValue({
-      five_hour: {
-        utilization: 100,
-        resets_at: '2099-03-07T12:00:00Z',
-        remaining_seconds: 3600
-      },
-      seven_day: null,
-      codex_quota_overdraft: {
-        status: 'failed',
-        quota_window: '5h',
-        cycle_key: '5h:4076577600',
-        attempts: 1,
-        limit: 1,
-        model: 'gpt-5.5',
-        reason_code: 'quota_limited',
-        started_at: '2099-03-07T10:00:00Z',
-        tested_at: '2099-03-07T10:01:00Z',
-        recover_at: '2099-03-07T12:00:00Z'
-      }
-    })
-
-    const wrapper = mount(AccountUsageCell, {
-      props: {
-        account: makeAccount({
-          id: 2005,
-          platform: 'openai',
-          type: 'oauth',
-          extra: {}
-        })
-      },
-      global: {
-        stubs: {
-          UsageProgressBar: true,
-          AccountQuotaInfo: true
-        }
-      }
-    })
-
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('usage.overdraftProbeFailed')
-    expect(wrapper.text()).toContain('1/1 · 5h')
-  })
-
-  it('OpenAI OAuth 无法确认探测时不会显示自动重试信息', async () => {
-    getUsage.mockResolvedValue({
-      five_hour: {
-        utilization: 100,
-        resets_at: '2099-03-07T12:00:00Z',
-        remaining_seconds: 3600
-      },
-      codex_quota_overdraft: {
-        status: 'inconclusive',
-        quota_window: '5h',
-        cycle_key: '5h:4076577600',
-        attempts: 1,
-        limit: 1,
-        model: 'gpt-5.4',
-        reason_code: 'upstream_unavailable',
-        retry_count: 2,
-        started_at: '2099-03-07T10:00:00Z',
-        tested_at: '2099-03-07T10:01:00Z',
-        retry_at: '2099-03-07T10:04:00Z',
-        recover_at: '2099-03-07T12:00:00Z'
-      }
-    })
-
-    const wrapper = mount(AccountUsageCell, {
-      props: {
-        account: makeAccount({
-          id: 2006,
-          platform: 'openai',
-          type: 'oauth',
-          extra: {}
-        })
-      },
-      global: {
-        stubs: {
-          UsageProgressBar: true,
-          AccountQuotaInfo: true
-        }
-      }
-    })
-
-    await flushPromises()
-
-    const status = wrapper.get('[title*="upstream_unavailable"]')
-    expect(status.text()).toContain('usage.overdraftProbeInconclusive')
-    expect(status.text()).toContain('1/1 · 5h')
-    expect(status.attributes('title')).not.toContain('usage.overdraftRetryAt')
   })
 
   it('Key 账号会展示 today stats 徽章并带 A/U 提示', async () => {

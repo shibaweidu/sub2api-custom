@@ -871,49 +871,6 @@ func TestProxyOpenAIWSHTTPBridgeTurnHTTPStatusFailoverSafety(t *testing.T) {
 	}
 }
 
-func TestProxyOpenAIWSHTTPBridgeTurnGrokPreservesExhaustedAccount429Retry(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	retryCount := 2
-	responses := make([]*http.Response, retryCount+1)
-	for i := range responses {
-		responses[i] = &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Header:     http.Header{"Retry-After": []string{"0"}},
-			Body: io.NopCloser(strings.NewReader(
-				`{"error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
-			)),
-		}
-	}
-	upstream := &httpUpstreamSequenceRecorder{responses: responses}
-	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
-	account := &Account{
-		ID:                     5767,
-		Platform:               PlatformGrok,
-		Type:                   AccountTypeOAuth,
-		Concurrency:            1,
-		RateLimit429RetryCount: &retryCount,
-		Credentials:            map[string]any{"base_url": xai.DefaultCLIBaseURL},
-	}
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
-	payload := []byte(`{"type":"response.create","model":"grok-4.5","input":"hi"}`)
-
-	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(
-		context.Background(), c, account, "access-token", payload, len(payload),
-		"grok-4.5", "", "", "", "", 1, func([]byte) error { return nil },
-	)
-
-	require.Nil(t, result)
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.True(t, failoverErr.RetryableOnSameAccount)
-	require.True(t, failoverErr.RequestScopedTransient)
-	require.False(t, failoverErr.Account429RetryExhausted)
-	require.Equal(t, 1, upstream.callCount)
-}
-
 func TestProxyOpenAIWSHTTPBridgeTurnRetriesRejectedFieldBeforeClientOutput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -1193,6 +1150,35 @@ func TestProxyOpenAIWSHTTPBridgeTurnBareErrorEOFSynthesizesFailed(t *testing.T) 
 	require.Equal(t, "response.failed", gjson.GetBytes(writes[1], "type").String())
 	require.Equal(t, "failed", gjson.GetBytes(writes[1], "response.status").String())
 	require.Equal(t, "resp_eof", gjson.GetBytes(writes[1], "response.id").String())
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnBareBillingErrorEOFSanitizesFailed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_billing_eof\",\"status\":\"in_progress\"}}\n\n" +
+		"data: {\"type\":\"error\",\"error\":{\"code\":\"insufficient_balance\",\"message\":\"provider balance is zero\"}}\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}}
+	repo := &openAIStream403AccountRepo{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream, rateLimitService: NewRateLimitService(repo, nil, &config.Config{}, nil, nil)}
+	account := &Account{ID: 114, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
+	var writes [][]byte
+
+	result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, account, "sk-test", payload, len(payload), "gpt-5", "", "", "", "", 2, func(message []byte) error {
+		writes = append(writes, append([]byte(nil), message...))
+		return nil
+	})
+
+	require.EqualError(t, err, "provider balance is zero")
+	require.NotNil(t, result)
+	require.Equal(t, "response.failed", result.UpstreamTerminalEvent)
+	require.Len(t, writes, 2)
+	require.Equal(t, "upstream_account_unavailable", gjson.GetBytes(writes[1], "response.error.code").String())
+	require.Equal(t, UpstreamBillingExhaustedClientMessage, gjson.GetBytes(writes[1], "response.error.message").String())
+	require.NotContains(t, string(writes[1]), "provider balance")
+	require.Equal(t, 1, repo.setErrorCalls)
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurnBareErrorFollowedByCompletedUsesCompleted(t *testing.T) {

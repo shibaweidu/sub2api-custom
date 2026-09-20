@@ -119,6 +119,20 @@ func (_u *AccountUpdate) SetNillableType(v *string) *AccountUpdate {
 	return _u
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (_u *AccountUpdate) SetAccountScope(v string) *AccountUpdate {
+	_u.mutation.SetAccountScope(v)
+	return _u
+}
+
+// SetNillableAccountScope sets the "account_scope" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableAccountScope(v *string) *AccountUpdate {
+	if v != nil {
+		_u.SetAccountScope(*v)
+	}
+	return _u
+}
+
 // SetCredentials sets the "credentials" field.
 func (_u *AccountUpdate) SetCredentials(v map[string]interface{}) *AccountUpdate {
 	_u.mutation.SetCredentials(v)
@@ -196,27 +210,6 @@ func (_u *AccountUpdate) SetNillableConcurrency(v *int) *AccountUpdate {
 // AddConcurrency adds value to the "concurrency" field.
 func (_u *AccountUpdate) AddConcurrency(v int) *AccountUpdate {
 	_u.mutation.AddConcurrency(v)
-	return _u
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (_u *AccountUpdate) SetRateLimit429RetryCount(v int) *AccountUpdate {
-	_u.mutation.ResetRateLimit429RetryCount()
-	_u.mutation.SetRateLimit429RetryCount(v)
-	return _u
-}
-
-// SetNillableRateLimit429RetryCount sets the "rate_limit_429_retry_count" field if the given value is not nil.
-func (_u *AccountUpdate) SetNillableRateLimit429RetryCount(v *int) *AccountUpdate {
-	if v != nil {
-		_u.SetRateLimit429RetryCount(*v)
-	}
-	return _u
-}
-
-// AddRateLimit429RetryCount adds value to the "rate_limit_429_retry_count" field.
-func (_u *AccountUpdate) AddRateLimit429RetryCount(v int) *AccountUpdate {
-	_u.mutation.AddRateLimit429RetryCount(v)
 	return _u
 }
 
@@ -605,6 +598,21 @@ func (_u *AccountUpdate) SetProxy(v *Proxy) *AccountUpdate {
 	return _u.SetProxyID(v.ID)
 }
 
+// AddProxyIDs adds the "proxies" edge to the Proxy entity by IDs.
+func (_u *AccountUpdate) AddProxyIDs(ids ...int64) *AccountUpdate {
+	_u.mutation.AddProxyIDs(ids...)
+	return _u
+}
+
+// AddProxies adds the "proxies" edges to the Proxy entity.
+func (_u *AccountUpdate) AddProxies(v ...*Proxy) *AccountUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddProxyIDs(ids...)
+}
+
 // SetParentID sets the "parent" edge to the Account entity by ID.
 func (_u *AccountUpdate) SetParentID(id int64) *AccountUpdate {
 	_u.mutation.SetParentID(id)
@@ -684,6 +692,27 @@ func (_u *AccountUpdate) RemoveGroups(v ...*Group) *AccountUpdate {
 func (_u *AccountUpdate) ClearProxy() *AccountUpdate {
 	_u.mutation.ClearProxy()
 	return _u
+}
+
+// ClearProxies clears all "proxies" edges to the Proxy entity.
+func (_u *AccountUpdate) ClearProxies() *AccountUpdate {
+	_u.mutation.ClearProxies()
+	return _u
+}
+
+// RemoveProxyIDs removes the "proxies" edge to Proxy entities by IDs.
+func (_u *AccountUpdate) RemoveProxyIDs(ids ...int64) *AccountUpdate {
+	_u.mutation.RemoveProxyIDs(ids...)
+	return _u
+}
+
+// RemoveProxies removes "proxies" edges to Proxy entities.
+func (_u *AccountUpdate) RemoveProxies(v ...*Proxy) *AccountUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveProxyIDs(ids...)
 }
 
 // ClearParent clears the "parent" edge to the Account entity.
@@ -793,9 +822,9 @@ func (_u *AccountUpdate) check() error {
 			return &ValidationError{Name: "type", err: fmt.Errorf(`ent: validator failed for field "Account.type": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.RateLimit429RetryCount(); ok {
-		if err := account.RateLimit429RetryCountValidator(v); err != nil {
-			return &ValidationError{Name: "rate_limit_429_retry_count", err: fmt.Errorf(`ent: validator failed for field "Account.rate_limit_429_retry_count": %w`, err)}
+	if v, ok := _u.mutation.AccountScope(); ok {
+		if err := account.AccountScopeValidator(v); err != nil {
+			return &ValidationError{Name: "account_scope", err: fmt.Errorf(`ent: validator failed for field "Account.account_scope": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Status(); ok {
@@ -852,6 +881,9 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.GetType(); ok {
 		_spec.SetField(account.FieldType, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.AccountScope(); ok {
+		_spec.SetField(account.FieldAccountScope, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
 	}
@@ -872,12 +904,6 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.AddedConcurrency(); ok {
 		_spec.AddField(account.FieldConcurrency, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.RateLimit429RetryCount(); ok {
-		_spec.SetField(account.FieldRateLimit429RetryCount, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedRateLimit429RetryCount(); ok {
-		_spec.AddField(account.FieldRateLimit429RetryCount, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.LoadFactor(); ok {
 		_spec.SetField(account.FieldLoadFactor, field.TypeInt, value)
@@ -1062,6 +1088,63 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ProxiesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedProxiesIDs(); len(nodes) > 0 && !_u.mutation.ProxiesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ProxiesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _u.mutation.ParentCleared() {
@@ -1291,6 +1374,20 @@ func (_u *AccountUpdateOne) SetNillableType(v *string) *AccountUpdateOne {
 	return _u
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (_u *AccountUpdateOne) SetAccountScope(v string) *AccountUpdateOne {
+	_u.mutation.SetAccountScope(v)
+	return _u
+}
+
+// SetNillableAccountScope sets the "account_scope" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableAccountScope(v *string) *AccountUpdateOne {
+	if v != nil {
+		_u.SetAccountScope(*v)
+	}
+	return _u
+}
+
 // SetCredentials sets the "credentials" field.
 func (_u *AccountUpdateOne) SetCredentials(v map[string]interface{}) *AccountUpdateOne {
 	_u.mutation.SetCredentials(v)
@@ -1368,27 +1465,6 @@ func (_u *AccountUpdateOne) SetNillableConcurrency(v *int) *AccountUpdateOne {
 // AddConcurrency adds value to the "concurrency" field.
 func (_u *AccountUpdateOne) AddConcurrency(v int) *AccountUpdateOne {
 	_u.mutation.AddConcurrency(v)
-	return _u
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (_u *AccountUpdateOne) SetRateLimit429RetryCount(v int) *AccountUpdateOne {
-	_u.mutation.ResetRateLimit429RetryCount()
-	_u.mutation.SetRateLimit429RetryCount(v)
-	return _u
-}
-
-// SetNillableRateLimit429RetryCount sets the "rate_limit_429_retry_count" field if the given value is not nil.
-func (_u *AccountUpdateOne) SetNillableRateLimit429RetryCount(v *int) *AccountUpdateOne {
-	if v != nil {
-		_u.SetRateLimit429RetryCount(*v)
-	}
-	return _u
-}
-
-// AddRateLimit429RetryCount adds value to the "rate_limit_429_retry_count" field.
-func (_u *AccountUpdateOne) AddRateLimit429RetryCount(v int) *AccountUpdateOne {
-	_u.mutation.AddRateLimit429RetryCount(v)
 	return _u
 }
 
@@ -1777,6 +1853,21 @@ func (_u *AccountUpdateOne) SetProxy(v *Proxy) *AccountUpdateOne {
 	return _u.SetProxyID(v.ID)
 }
 
+// AddProxyIDs adds the "proxies" edge to the Proxy entity by IDs.
+func (_u *AccountUpdateOne) AddProxyIDs(ids ...int64) *AccountUpdateOne {
+	_u.mutation.AddProxyIDs(ids...)
+	return _u
+}
+
+// AddProxies adds the "proxies" edges to the Proxy entity.
+func (_u *AccountUpdateOne) AddProxies(v ...*Proxy) *AccountUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddProxyIDs(ids...)
+}
+
 // SetParentID sets the "parent" edge to the Account entity by ID.
 func (_u *AccountUpdateOne) SetParentID(id int64) *AccountUpdateOne {
 	_u.mutation.SetParentID(id)
@@ -1856,6 +1947,27 @@ func (_u *AccountUpdateOne) RemoveGroups(v ...*Group) *AccountUpdateOne {
 func (_u *AccountUpdateOne) ClearProxy() *AccountUpdateOne {
 	_u.mutation.ClearProxy()
 	return _u
+}
+
+// ClearProxies clears all "proxies" edges to the Proxy entity.
+func (_u *AccountUpdateOne) ClearProxies() *AccountUpdateOne {
+	_u.mutation.ClearProxies()
+	return _u
+}
+
+// RemoveProxyIDs removes the "proxies" edge to Proxy entities by IDs.
+func (_u *AccountUpdateOne) RemoveProxyIDs(ids ...int64) *AccountUpdateOne {
+	_u.mutation.RemoveProxyIDs(ids...)
+	return _u
+}
+
+// RemoveProxies removes "proxies" edges to Proxy entities.
+func (_u *AccountUpdateOne) RemoveProxies(v ...*Proxy) *AccountUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveProxyIDs(ids...)
 }
 
 // ClearParent clears the "parent" edge to the Account entity.
@@ -1978,9 +2090,9 @@ func (_u *AccountUpdateOne) check() error {
 			return &ValidationError{Name: "type", err: fmt.Errorf(`ent: validator failed for field "Account.type": %w`, err)}
 		}
 	}
-	if v, ok := _u.mutation.RateLimit429RetryCount(); ok {
-		if err := account.RateLimit429RetryCountValidator(v); err != nil {
-			return &ValidationError{Name: "rate_limit_429_retry_count", err: fmt.Errorf(`ent: validator failed for field "Account.rate_limit_429_retry_count": %w`, err)}
+	if v, ok := _u.mutation.AccountScope(); ok {
+		if err := account.AccountScopeValidator(v); err != nil {
+			return &ValidationError{Name: "account_scope", err: fmt.Errorf(`ent: validator failed for field "Account.account_scope": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Status(); ok {
@@ -2054,6 +2166,9 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	if value, ok := _u.mutation.GetType(); ok {
 		_spec.SetField(account.FieldType, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.AccountScope(); ok {
+		_spec.SetField(account.FieldAccountScope, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Credentials(); ok {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
 	}
@@ -2074,12 +2189,6 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.AddedConcurrency(); ok {
 		_spec.AddField(account.FieldConcurrency, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.RateLimit429RetryCount(); ok {
-		_spec.SetField(account.FieldRateLimit429RetryCount, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedRateLimit429RetryCount(); ok {
-		_spec.AddField(account.FieldRateLimit429RetryCount, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.LoadFactor(); ok {
 		_spec.SetField(account.FieldLoadFactor, field.TypeInt, value)
@@ -2264,6 +2373,63 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ProxiesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedProxiesIDs(); len(nodes) > 0 && !_u.mutation.ProxiesCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ProxiesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &AccountProxyCreate{config: _u.config, mutation: newAccountProxyMutation(_u.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _u.mutation.ParentCleared() {

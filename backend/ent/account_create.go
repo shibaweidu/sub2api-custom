@@ -99,6 +99,20 @@ func (_c *AccountCreate) SetType(v string) *AccountCreate {
 	return _c
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (_c *AccountCreate) SetAccountScope(v string) *AccountCreate {
+	_c.mutation.SetAccountScope(v)
+	return _c
+}
+
+// SetNillableAccountScope sets the "account_scope" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableAccountScope(v *string) *AccountCreate {
+	if v != nil {
+		_c.SetAccountScope(*v)
+	}
+	return _c
+}
+
 // SetCredentials sets the "credentials" field.
 func (_c *AccountCreate) SetCredentials(v map[string]interface{}) *AccountCreate {
 	_c.mutation.SetCredentials(v)
@@ -149,20 +163,6 @@ func (_c *AccountCreate) SetConcurrency(v int) *AccountCreate {
 func (_c *AccountCreate) SetNillableConcurrency(v *int) *AccountCreate {
 	if v != nil {
 		_c.SetConcurrency(*v)
-	}
-	return _c
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (_c *AccountCreate) SetRateLimit429RetryCount(v int) *AccountCreate {
-	_c.mutation.SetRateLimit429RetryCount(v)
-	return _c
-}
-
-// SetNillableRateLimit429RetryCount sets the "rate_limit_429_retry_count" field if the given value is not nil.
-func (_c *AccountCreate) SetNillableRateLimit429RetryCount(v *int) *AccountCreate {
-	if v != nil {
-		_c.SetRateLimit429RetryCount(*v)
 	}
 	return _c
 }
@@ -453,6 +453,21 @@ func (_c *AccountCreate) SetProxy(v *Proxy) *AccountCreate {
 	return _c.SetProxyID(v.ID)
 }
 
+// AddProxyIDs adds the "proxies" edge to the Proxy entity by IDs.
+func (_c *AccountCreate) AddProxyIDs(ids ...int64) *AccountCreate {
+	_c.mutation.AddProxyIDs(ids...)
+	return _c
+}
+
+// AddProxies adds the "proxies" edges to the Proxy entity.
+func (_c *AccountCreate) AddProxies(v ...*Proxy) *AccountCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddProxyIDs(ids...)
+}
+
 // SetParentID sets the "parent" edge to the Account entity by ID.
 func (_c *AccountCreate) SetParentID(id int64) *AccountCreate {
 	_c.mutation.SetParentID(id)
@@ -553,6 +568,10 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.AccountScope(); !ok {
+		v := account.DefaultAccountScope
+		_c.mutation.SetAccountScope(v)
+	}
 	if _, ok := _c.mutation.Credentials(); !ok {
 		if account.DefaultCredentials == nil {
 			return fmt.Errorf("ent: uninitialized account.DefaultCredentials (forgotten import ent/runtime?)")
@@ -570,10 +589,6 @@ func (_c *AccountCreate) defaults() error {
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		v := account.DefaultConcurrency
 		_c.mutation.SetConcurrency(v)
-	}
-	if _, ok := _c.mutation.RateLimit429RetryCount(); !ok {
-		v := account.DefaultRateLimit429RetryCount
-		_c.mutation.SetRateLimit429RetryCount(v)
 	}
 	if _, ok := _c.mutation.Priority(); !ok {
 		v := account.DefaultPriority
@@ -634,6 +649,14 @@ func (_c *AccountCreate) check() error {
 			return &ValidationError{Name: "type", err: fmt.Errorf(`ent: validator failed for field "Account.type": %w`, err)}
 		}
 	}
+	if _, ok := _c.mutation.AccountScope(); !ok {
+		return &ValidationError{Name: "account_scope", err: errors.New(`ent: missing required field "Account.account_scope"`)}
+	}
+	if v, ok := _c.mutation.AccountScope(); ok {
+		if err := account.AccountScopeValidator(v); err != nil {
+			return &ValidationError{Name: "account_scope", err: fmt.Errorf(`ent: validator failed for field "Account.account_scope": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Credentials(); !ok {
 		return &ValidationError{Name: "credentials", err: errors.New(`ent: missing required field "Account.credentials"`)}
 	}
@@ -642,14 +665,6 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		return &ValidationError{Name: "concurrency", err: errors.New(`ent: missing required field "Account.concurrency"`)}
-	}
-	if _, ok := _c.mutation.RateLimit429RetryCount(); !ok {
-		return &ValidationError{Name: "rate_limit_429_retry_count", err: errors.New(`ent: missing required field "Account.rate_limit_429_retry_count"`)}
-	}
-	if v, ok := _c.mutation.RateLimit429RetryCount(); ok {
-		if err := account.RateLimit429RetryCountValidator(v); err != nil {
-			return &ValidationError{Name: "rate_limit_429_retry_count", err: fmt.Errorf(`ent: validator failed for field "Account.rate_limit_429_retry_count": %w`, err)}
-		}
 	}
 	if _, ok := _c.mutation.Priority(); !ok {
 		return &ValidationError{Name: "priority", err: errors.New(`ent: missing required field "Account.priority"`)}
@@ -739,6 +754,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 		_spec.SetField(account.FieldType, field.TypeString, value)
 		_node.Type = value
 	}
+	if value, ok := _c.mutation.AccountScope(); ok {
+		_spec.SetField(account.FieldAccountScope, field.TypeString, value)
+		_node.AccountScope = value
+	}
 	if value, ok := _c.mutation.Credentials(); ok {
 		_spec.SetField(account.FieldCredentials, field.TypeJSON, value)
 		_node.Credentials = value
@@ -754,10 +773,6 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Concurrency(); ok {
 		_spec.SetField(account.FieldConcurrency, field.TypeInt, value)
 		_node.Concurrency = value
-	}
-	if value, ok := _c.mutation.RateLimit429RetryCount(); ok {
-		_spec.SetField(account.FieldRateLimit429RetryCount, field.TypeInt, value)
-		_node.RateLimit429RetryCount = value
 	}
 	if value, ok := _c.mutation.LoadFactor(); ok {
 		_spec.SetField(account.FieldLoadFactor, field.TypeInt, value)
@@ -866,6 +881,26 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
 		_node.ProxyID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.ProxiesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2M,
+			Inverse: false,
+			Table:   account.ProxiesTable,
+			Columns: account.ProxiesPrimaryKey,
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(proxy.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		createE := &AccountProxyCreate{config: _c.config, mutation: newAccountProxyMutation(_c.config, OpCreate)}
+		createE.defaults()
+		_, specE := createE.createSpec()
+		edge.Target.Fields = specE.Fields
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.ParentIDs(); len(nodes) > 0 {
@@ -1053,6 +1088,18 @@ func (u *AccountUpsert) UpdateType() *AccountUpsert {
 	return u
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (u *AccountUpsert) SetAccountScope(v string) *AccountUpsert {
+	u.Set(account.FieldAccountScope, v)
+	return u
+}
+
+// UpdateAccountScope sets the "account_scope" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateAccountScope() *AccountUpsert {
+	u.SetExcluded(account.FieldAccountScope)
+	return u
+}
+
 // SetCredentials sets the "credentials" field.
 func (u *AccountUpsert) SetCredentials(v map[string]interface{}) *AccountUpsert {
 	u.Set(account.FieldCredentials, v)
@@ -1134,24 +1181,6 @@ func (u *AccountUpsert) UpdateConcurrency() *AccountUpsert {
 // AddConcurrency adds v to the "concurrency" field.
 func (u *AccountUpsert) AddConcurrency(v int) *AccountUpsert {
 	u.Add(account.FieldConcurrency, v)
-	return u
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (u *AccountUpsert) SetRateLimit429RetryCount(v int) *AccountUpsert {
-	u.Set(account.FieldRateLimit429RetryCount, v)
-	return u
-}
-
-// UpdateRateLimit429RetryCount sets the "rate_limit_429_retry_count" field to the value that was provided on create.
-func (u *AccountUpsert) UpdateRateLimit429RetryCount() *AccountUpsert {
-	u.SetExcluded(account.FieldRateLimit429RetryCount)
-	return u
-}
-
-// AddRateLimit429RetryCount adds v to the "rate_limit_429_retry_count" field.
-func (u *AccountUpsert) AddRateLimit429RetryCount(v int) *AccountUpsert {
-	u.Add(account.FieldRateLimit429RetryCount, v)
 	return u
 }
 
@@ -1622,6 +1651,20 @@ func (u *AccountUpsertOne) UpdateType() *AccountUpsertOne {
 	})
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (u *AccountUpsertOne) SetAccountScope(v string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAccountScope(v)
+	})
+}
+
+// UpdateAccountScope sets the "account_scope" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateAccountScope() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAccountScope()
+	})
+}
+
 // SetCredentials sets the "credentials" field.
 func (u *AccountUpsertOne) SetCredentials(v map[string]interface{}) *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
@@ -1717,27 +1760,6 @@ func (u *AccountUpsertOne) AddConcurrency(v int) *AccountUpsertOne {
 func (u *AccountUpsertOne) UpdateConcurrency() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateConcurrency()
-	})
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (u *AccountUpsertOne) SetRateLimit429RetryCount(v int) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetRateLimit429RetryCount(v)
-	})
-}
-
-// AddRateLimit429RetryCount adds v to the "rate_limit_429_retry_count" field.
-func (u *AccountUpsertOne) AddRateLimit429RetryCount(v int) *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.AddRateLimit429RetryCount(v)
-	})
-}
-
-// UpdateRateLimit429RetryCount sets the "rate_limit_429_retry_count" field to the value that was provided on create.
-func (u *AccountUpsertOne) UpdateRateLimit429RetryCount() *AccountUpsertOne {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateRateLimit429RetryCount()
 	})
 }
 
@@ -2428,6 +2450,20 @@ func (u *AccountUpsertBulk) UpdateType() *AccountUpsertBulk {
 	})
 }
 
+// SetAccountScope sets the "account_scope" field.
+func (u *AccountUpsertBulk) SetAccountScope(v string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetAccountScope(v)
+	})
+}
+
+// UpdateAccountScope sets the "account_scope" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateAccountScope() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateAccountScope()
+	})
+}
+
 // SetCredentials sets the "credentials" field.
 func (u *AccountUpsertBulk) SetCredentials(v map[string]interface{}) *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
@@ -2523,27 +2559,6 @@ func (u *AccountUpsertBulk) AddConcurrency(v int) *AccountUpsertBulk {
 func (u *AccountUpsertBulk) UpdateConcurrency() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateConcurrency()
-	})
-}
-
-// SetRateLimit429RetryCount sets the "rate_limit_429_retry_count" field.
-func (u *AccountUpsertBulk) SetRateLimit429RetryCount(v int) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.SetRateLimit429RetryCount(v)
-	})
-}
-
-// AddRateLimit429RetryCount adds v to the "rate_limit_429_retry_count" field.
-func (u *AccountUpsertBulk) AddRateLimit429RetryCount(v int) *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.AddRateLimit429RetryCount(v)
-	})
-}
-
-// UpdateRateLimit429RetryCount sets the "rate_limit_429_retry_count" field to the value that was provided on create.
-func (u *AccountUpsertBulk) UpdateRateLimit429RetryCount() *AccountUpsertBulk {
-	return u.Update(func(s *AccountUpsert) {
-		s.UpdateRateLimit429RetryCount()
 	})
 }
 

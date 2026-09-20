@@ -106,6 +106,8 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		for _, name := range [...]string{
 			"x-codex-window-id",
 			"x-codex-installation-id",
+			"x-codex-parent-thread-id",
+			"x-openai-subagent",
 			"session-id",
 			"thread-id",
 			"x-client-request-id",
@@ -141,10 +143,13 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	if state := strings.TrimSpace(turnState); state != "" {
 		headers.Set(openAIWSTurnStateHeader, state)
 	}
+	if err := s.applyOpenAICodexTicket(ctx, account, routingModel, headers); err != nil {
+		return nil, sessionResolution, err
+	}
 	if metadata := strings.TrimSpace(turnMetadata); metadata != "" {
 		headers.Set(openAIWSTurnMetadataHeader, metadata)
 	}
-	ensureStagedCodexFingerprintIDs(c, account, s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIAccountUniqueFingerprintEnabled)
+	ensureStagedCodexFingerprintIDs(c, account)
 	applyCodexAccountIdentityHeaders(headers, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
 	applyStagedCodexFingerprintHeaders(c, account, headers)
 

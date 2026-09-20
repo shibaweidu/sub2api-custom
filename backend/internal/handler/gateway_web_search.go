@@ -303,18 +303,20 @@ func (h *GatewayHandler) acquireWebSearchAccountSlot(
 		}
 	}
 	streamStarted := false
-	slotRelease, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeoutForAccount(
+	slotRelease, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
 		c,
-		account,
+		account.ID,
 		selected.WaitPlan.MaxConcurrency,
 		selected.WaitPlan.Timeout,
 		false,
 		&streamStarted,
+		&account,
 	)
 	releaseWait()
 	if err != nil {
 		return nil, false, err
 	}
+	selected.Account = account
 	return slotRelease, true, nil
 }
 

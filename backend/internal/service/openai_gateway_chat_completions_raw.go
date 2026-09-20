@@ -178,6 +178,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
+	upstreamBody, err = normalizeStrictChatDeveloperRoles(account, targetURL, upstreamBody)
+	if err != nil {
+		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return nil, err
+	}
 	SetActualOpenAIUpstreamEndpoint(c, grokChatRawEndpoint)
 	customUA := account.GetOpenAIUserAgent()
 	if customUA == "" && account.IsGrokOAuth() {
@@ -211,7 +216,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
 				retryable, retryDelay, retryDeadline, retryMax := grokSameAccountRetryMetadata(account, resp.StatusCode, respBody)
-				return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{
+				return nil, &UpstreamFailoverError{
 					StatusCode:               resp.StatusCode,
 					ResponseBody:             respBody,
 					ResponseHeaders:          resp.Header.Clone(),
@@ -220,7 +225,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 					SameAccountRetryDelay:    retryDelay,
 					SameAccountRetryDeadline: retryDeadline,
 					SameAccountRetryMax:      retryMax,
-				})
+				}
 			}
 			return s.handleChatCompletionsErrorResponse(resp, c, account, billingModel)
 		}

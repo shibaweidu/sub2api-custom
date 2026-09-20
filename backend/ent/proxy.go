@@ -23,6 +23,8 @@ type Proxy struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	// Owner of a shared proxy; NULL for system proxies.
+	OwnerUserID *int64 `json:"owner_user_id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
 	// Protocol holds the value of the "protocol" field.
@@ -53,6 +55,8 @@ type Proxy struct {
 
 // ProxyEdges holds the relations/edges for other nodes in the graph.
 type ProxyEdges struct {
+	// PoolAccounts holds the value of the pool_accounts edge.
+	PoolAccounts []*Account `json:"pool_accounts,omitempty"`
 	// Accounts holds the value of the accounts edge.
 	Accounts []*Account `json:"accounts,omitempty"`
 	// PrimaryProxies holds the value of the primary_proxies edge.
@@ -61,13 +65,22 @@ type ProxyEdges struct {
 	BackupProxy *Proxy `json:"backup_proxy,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [3]bool
+	loadedTypes [4]bool
+}
+
+// PoolAccountsOrErr returns the PoolAccounts value or an error if the edge
+// was not loaded in eager-loading.
+func (e ProxyEdges) PoolAccountsOrErr() ([]*Account, error) {
+	if e.loadedTypes[0] {
+		return e.PoolAccounts, nil
+	}
+	return nil, &NotLoadedError{edge: "pool_accounts"}
 }
 
 // AccountsOrErr returns the Accounts value or an error if the edge
 // was not loaded in eager-loading.
 func (e ProxyEdges) AccountsOrErr() ([]*Account, error) {
-	if e.loadedTypes[0] {
+	if e.loadedTypes[1] {
 		return e.Accounts, nil
 	}
 	return nil, &NotLoadedError{edge: "accounts"}
@@ -76,7 +89,7 @@ func (e ProxyEdges) AccountsOrErr() ([]*Account, error) {
 // PrimaryProxiesOrErr returns the PrimaryProxies value or an error if the edge
 // was not loaded in eager-loading.
 func (e ProxyEdges) PrimaryProxiesOrErr() ([]*Proxy, error) {
-	if e.loadedTypes[1] {
+	if e.loadedTypes[2] {
 		return e.PrimaryProxies, nil
 	}
 	return nil, &NotLoadedError{edge: "primary_proxies"}
@@ -87,7 +100,7 @@ func (e ProxyEdges) PrimaryProxiesOrErr() ([]*Proxy, error) {
 func (e ProxyEdges) BackupProxyOrErr() (*Proxy, error) {
 	if e.BackupProxy != nil {
 		return e.BackupProxy, nil
-	} else if e.loadedTypes[2] {
+	} else if e.loadedTypes[3] {
 		return nil, &NotFoundError{label: proxy.Label}
 	}
 	return nil, &NotLoadedError{edge: "backup_proxy"}
@@ -98,7 +111,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case proxy.FieldID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays:
+		case proxy.FieldID, proxy.FieldOwnerUserID, proxy.FieldPort, proxy.FieldBackupProxyID, proxy.FieldExpiryWarnDays:
 			values[i] = new(sql.NullInt64)
 		case proxy.FieldName, proxy.FieldProtocol, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldStatus, proxy.FieldFallbackMode:
 			values[i] = new(sql.NullString)
@@ -143,6 +156,13 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DeletedAt = new(time.Time)
 				*_m.DeletedAt = value.Time
+			}
+		case proxy.FieldOwnerUserID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field owner_user_id", values[i])
+			} else if value.Valid {
+				_m.OwnerUserID = new(int64)
+				*_m.OwnerUserID = value.Int64
 			}
 		case proxy.FieldName:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -227,6 +247,11 @@ func (_m *Proxy) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
 }
 
+// QueryPoolAccounts queries the "pool_accounts" edge of the Proxy entity.
+func (_m *Proxy) QueryPoolAccounts() *AccountQuery {
+	return NewProxyClient(_m.config).QueryPoolAccounts(_m)
+}
+
 // QueryAccounts queries the "accounts" edge of the Proxy entity.
 func (_m *Proxy) QueryAccounts() *AccountQuery {
 	return NewProxyClient(_m.config).QueryAccounts(_m)
@@ -274,6 +299,11 @@ func (_m *Proxy) String() string {
 	if v := _m.DeletedAt; v != nil {
 		builder.WriteString("deleted_at=")
 		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.OwnerUserID; v != nil {
+		builder.WriteString("owner_user_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
 	builder.WriteString("name=")

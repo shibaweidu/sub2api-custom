@@ -23,6 +23,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	account *Account,
 	reqBody map[string]any,
 	clientPromptCacheKey string,
+	executionScope string,
 	token string,
 	decision OpenAIWSProtocolDecision,
 	isCodexCLI bool,
@@ -34,6 +35,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	lastFailureReason string,
 	agentTaskRecoveryTried *bool,
 ) (*OpenAIForwardResult, error) {
+	defer releaseStagedCodexFingerprintLease(c)
 	if s == nil || account == nil {
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
@@ -70,7 +72,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		turnMetadata = strings.TrimSpace(c.GetHeader(openAIWSTurnMetadataHeader))
 	}
 	setOpenAIWSTurnMetadata(payload, turnMetadata)
-	ensureStagedCodexFingerprintIDs(c, account, s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIAccountUniqueFingerprintEnabled)
+	ensureStagedCodexFingerprintIDs(c, account)
 	applyStagedCodexFingerprintClientMetadata(c, account, payload)
 	previousResponseID := openAIWSPayloadString(payload, "previous_response_id")
 	previousResponseIDKind := ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
@@ -124,6 +126,12 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		var legacySessionHash string
 		sessionHash, legacySessionHash = openAIWSSessionHashesFromID(promptCacheKey)
 		attachOpenAILegacySessionHashToGin(c, legacySessionHash)
+	}
+	// 与 WS 接入路径共用执行作用域：codex 多智能体共用 session-id，turn state 与
+	// store=false 的连接绑定必须按线程隔离，同一线程在两条路径之间也才能共享状态。
+	// 作用域由 Forward 从改写前的原始请求算出后传入，reqBody 此时已带账号 namespace。
+	if executionScope = strings.TrimSpace(executionScope); executionScope != "" {
+		sessionHash = executionScope
 	}
 	if turnState == "" && stateStore != nil && sessionHash != "" {
 		if savedTurnState, ok := stateStore.GetSessionTurnState(groupID, sessionHash); ok {
@@ -193,7 +201,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		account.ProxyID != nil && account.Proxy != nil,
 	)
 
-	acquireCtx, acquireCancel := context.WithTimeout(ctx, s.openAIWSAcquireTimeout(account))
+	acquireCtx, acquireCancel := context.WithTimeout(ctx, s.openAIWSAcquireTimeout())
 	defer acquireCancel()
 
 	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
@@ -268,12 +276,15 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}()
 	connID := strings.TrimSpace(lease.ConnID())
 	logOpenAIWSModeDebug(
-		"connected account_id=%d account_type=%s transport=%s conn_id=%s conn_reused=%v conn_pick_ms=%d queue_wait_ms=%d has_previous_response_id=%v",
+		"connected account_id=%d account_type=%s transport=%s conn_id=%s conn_reused=%v conn_idle_ms=%d conn_age_ms=%d upstream_pings=%d conn_pick_ms=%d queue_wait_ms=%d has_previous_response_id=%v",
 		account.ID,
 		account.Type,
 		normalizeOpenAIWSLogValue(string(decision.Transport)),
 		connID,
 		lease.Reused(),
+		lease.IdleBefore().Milliseconds(),
+		lease.AgeBefore().Milliseconds(),
+		lease.UpstreamPingCount(),
 		lease.ConnPickDuration().Milliseconds(),
 		lease.QueueWaitDuration().Milliseconds(),
 		previousResponseID != "",
@@ -338,7 +349,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	); err != nil {
 		return nil, err
 	}
-	payload = s.prepareCodexQuotaOverdraftPayload(ctx, account, payload)
 
 	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
@@ -382,6 +392,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	firstEventType := ""
 	lastEventType := ""
 	upstreamTerminalEvent := ""
+	billingAccountSideEffectsApplied := false
 	clientDisconnected := false
 	clientDisconnectDrainStartedAt := time.Time{}
 	readTimeout := s.openAIWSReadTimeout()
@@ -667,11 +678,47 @@ readLoop:
 		if eventType == "error" || eventType == "response.failed" {
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
 		}
+		if !wroteDownstream && (eventType == "error" || eventType == "response.failed") {
+			if hit, _, _ := detectOpenAICyberPolicy(message); !hit && openAIWSBillingStatus(message, extractOpenAISSEErrorMessage(message)) == 0 {
+				if retryFailure := configuredOpenAIStreamRetryFailure(ctx, message, extractOpenAISSEErrorMessage(message), usage); retryFailure != nil {
+					lease.MarkBroken()
+					return nil, retryFailure
+				}
+			}
+		}
 
 		if eventType == "error" {
-			s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
-			s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+			billingStatus := openAIWSBillingStatus(message, errMsgRaw)
+			if billingStatus != 0 {
+				if !billingAccountSideEffectsApplied {
+					s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+					billingAccountSideEffectsApplied = true
+				}
+			} else {
+				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+			}
+			if billingStatus != 0 {
+				// A semantic billing rejection is an account failure even though
+				// the websocket itself was established with HTTP 200. Before any
+				// downstream output, return a failover so the handler can try the
+				// next account; after output, only expose the safe event message.
+				if !wroteDownstream {
+					lease.MarkBroken()
+					return nil, newUpstreamBillingFailoverError(
+						billingStatus,
+						lease.HandshakeHeaders(),
+						message,
+						false,
+					)
+				}
+				if sanitized, changed := sanitizeOpenAIResponseFailedEventForClient(message, "error", true); changed {
+					message = sanitized
+				}
+			}
+			if billingStatus == 0 {
+				s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+			}
 			errMsg := strings.TrimSpace(errMsgRaw)
 			if errMsg == "" {
 				errMsg = "Upstream websocket error"
@@ -722,19 +769,54 @@ readLoop:
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			setOpsUpstreamError(c, statusCode, errMsg, "")
+			clientStatusCode, clientMessage := statusCode, errMsg
+			if billingStatus != 0 {
+				clientStatusCode = http.StatusBadGateway
+				clientMessage = UpstreamBillingExhaustedClientMessage
+			}
 			if reqStream && !clientDisconnected {
 				flushBufferedStreamEvents("error_event")
 				emitStreamMessage(message, true)
 			}
 			if !reqStream {
-				c.JSON(statusCode, gin.H{
+				c.JSON(clientStatusCode, gin.H{
 					"error": gin.H{
 						"type":    "upstream_error",
-						"message": errMsg,
+						"message": clientMessage,
 					},
 				})
 			}
-			return nil, fmt.Errorf("openai ws error event: %s", errMsg)
+			return nil, fmt.Errorf("openai ws error event: %s", clientMessage)
+		}
+		if eventType == "response.failed" {
+			if billingStatus := openAIWSBillingStatus(message, extractOpenAISSEErrorMessage(message)); billingStatus != 0 {
+				if !wroteDownstream {
+					// response.failed is terminal and normally handled after the
+					// event is written. Billing failures must fail over first so
+					// the provider account balance is never exposed downstream.
+					if !billingAccountSideEffectsApplied {
+						s.handleOpenAIWSFailureAccountSideEffects(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+						billingAccountSideEffectsApplied = true
+					}
+					lease.MarkBroken()
+					return nil, newUpstreamBillingFailoverError(
+						billingStatus,
+						lease.HandshakeHeaders(),
+						message,
+						false,
+					)
+				}
+				// Keep account health decisions based on the provider payload. The
+				// client copy is sanitized below and no longer contains the billing
+				// code needed by the classifier.
+				if !billingAccountSideEffectsApplied {
+					s.handleOpenAIWSFailureAccountSideEffects(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+					billingAccountSideEffectsApplied = true
+				}
+				if sanitized, changed := sanitizeOpenAIResponseFailedEventForClient(message, "response.failed", true); changed {
+					message = sanitized
+				}
+			}
 		}
 
 		if reqStream {
@@ -771,7 +853,11 @@ readLoop:
 			if !clientDisconnected {
 				markOpenAIWSClientVisibleFailure(c, eventType, message)
 			}
-			upstreamTerminalEvent = s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+			if eventType == "response.failed" && billingAccountSideEffectsApplied {
+				upstreamTerminalEvent = normalizeOpenAIWSTerminalEvent(eventType)
+			} else {
+				upstreamTerminalEvent = s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+			}
 			// A terminal event must be the final JSON document in its WS message.
 			// Ignore any tail for the completed client turn, but never reuse the
 			// ambiguous upstream connection for another request.

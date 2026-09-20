@@ -156,18 +156,18 @@ type AdminAccountRepository interface {
 // AccountBulkUpdate describes the fields that can be updated in a bulk operation.
 // Nil pointers mean "do not change".
 type AccountBulkUpdate struct {
-	Name                   *string
-	ProxyID                *int64
-	Concurrency            *int
-	RateLimit429RetryCount *int
-	Priority               *int
-	RateMultiplier         *float64
-	LoadFactor             *int
-	Status                 *string
-	Schedulable            *bool
-	Credentials            map[string]any
-	Extra                  map[string]any
-	ProbeEnabled           *bool
+	ProxyIDs       *[]int64
+	Name           *string
+	ProxyID        *int64
+	Concurrency    *int
+	Priority       *int
+	RateMultiplier *float64
+	LoadFactor     *int
+	Status         *string
+	Schedulable    *bool
+	Credentials    map[string]any
+	Extra          map[string]any
+	ProbeEnabled   *bool
 	// EnsureCodexFingerprintSeed asks the repository to atomically preserve an
 	// existing valid Codex fingerprint seed or create one for eligible rows.
 	EnsureCodexFingerprintSeed bool
@@ -175,35 +175,33 @@ type AccountBulkUpdate struct {
 
 // CreateAccountRequest 创建账号请求
 type CreateAccountRequest struct {
-	Name                   string         `json:"name"`
-	Notes                  *string        `json:"notes"`
-	Platform               string         `json:"platform"`
-	Type                   string         `json:"type"`
-	Credentials            map[string]any `json:"credentials"`
-	Extra                  map[string]any `json:"extra"`
-	ProxyID                *int64         `json:"proxy_id"`
-	Concurrency            int            `json:"concurrency"`
-	RateLimit429RetryCount *int           `json:"rate_limit_429_retry_count"`
-	Priority               int            `json:"priority"`
-	GroupIDs               []int64        `json:"group_ids"`
-	ExpiresAt              *time.Time     `json:"expires_at"`
-	AutoPauseOnExpired     *bool          `json:"auto_pause_on_expired"`
+	Name               string         `json:"name"`
+	Notes              *string        `json:"notes"`
+	Platform           string         `json:"platform"`
+	Type               string         `json:"type"`
+	Credentials        map[string]any `json:"credentials"`
+	Extra              map[string]any `json:"extra"`
+	ProxyID            *int64         `json:"proxy_id"`
+	Concurrency        int            `json:"concurrency"`
+	Priority           int            `json:"priority"`
+	GroupIDs           []int64        `json:"group_ids"`
+	ExpiresAt          *time.Time     `json:"expires_at"`
+	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired"`
 }
 
 // UpdateAccountRequest 更新账号请求
 type UpdateAccountRequest struct {
-	Name                   *string         `json:"name"`
-	Notes                  *string         `json:"notes"`
-	Credentials            *map[string]any `json:"credentials"`
-	Extra                  *map[string]any `json:"extra"`
-	ProxyID                *int64          `json:"proxy_id"`
-	Concurrency            *int            `json:"concurrency"`
-	RateLimit429RetryCount *int            `json:"rate_limit_429_retry_count"`
-	Priority               *int            `json:"priority"`
-	Status                 *string         `json:"status"`
-	GroupIDs               *[]int64        `json:"group_ids"`
-	ExpiresAt              *time.Time      `json:"expires_at"`
-	AutoPauseOnExpired     *bool           `json:"auto_pause_on_expired"`
+	Name               *string         `json:"name"`
+	Notes              *string         `json:"notes"`
+	Credentials        *map[string]any `json:"credentials"`
+	Extra              *map[string]any `json:"extra"`
+	ProxyID            *int64          `json:"proxy_id"`
+	Concurrency        *int            `json:"concurrency"`
+	Priority           *int            `json:"priority"`
+	Status             *string         `json:"status"`
+	GroupIDs           *[]int64        `json:"group_ids"`
+	ExpiresAt          *time.Time      `json:"expires_at"`
+	AutoPauseOnExpired *bool           `json:"auto_pause_on_expired"`
 }
 
 // AccountService 账号管理服务
@@ -226,11 +224,6 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
-	if req.RateLimit429RetryCount != nil {
-		if err := ValidateRateLimit429RetryCount(*req.RateLimit429RetryCount); err != nil {
-			return nil, err
-		}
-	}
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
 		if err := s.validateGroupIDsExist(ctx, req.GroupIDs); err != nil {
@@ -240,18 +233,17 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 
 	// 创建账号
 	account := &Account{
-		Name:                   req.Name,
-		Notes:                  normalizeAccountNotes(req.Notes),
-		Platform:               req.Platform,
-		Type:                   req.Type,
-		Credentials:            SanitizeStoredCredentials(req.Platform, req.Credentials),
-		Extra:                  prepareCodexFingerprintExtraForCreate(req.Platform, req.Type, req.Extra),
-		ProxyID:                req.ProxyID,
-		Concurrency:            req.Concurrency,
-		RateLimit429RetryCount: cloneAccountValuePointer(req.RateLimit429RetryCount),
-		Priority:               req.Priority,
-		Status:                 StatusActive,
-		ExpiresAt:              req.ExpiresAt,
+		Name:        req.Name,
+		Notes:       normalizeAccountNotes(req.Notes),
+		Platform:    req.Platform,
+		Type:        req.Type,
+		Credentials: SanitizeStoredCredentials(req.Platform, req.Credentials),
+		Extra:       prepareCodexFingerprintExtraForCreate(req.Platform, req.Type, req.Extra),
+		ProxyID:     req.ProxyID,
+		Concurrency: req.Concurrency,
+		Priority:    req.Priority,
+		Status:      StatusActive,
+		ExpiresAt:   req.ExpiresAt,
 	}
 	if req.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *req.AutoPauseOnExpired
@@ -324,11 +316,6 @@ func (s *AccountService) ListByGroup(ctx context.Context, groupID int64) ([]Acco
 
 // Update 更新账号
 func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccountRequest) (*Account, error) {
-	if req.RateLimit429RetryCount != nil {
-		if err := ValidateRateLimit429RetryCount(*req.RateLimit429RetryCount); err != nil {
-			return nil, err
-		}
-	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
@@ -343,7 +330,7 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	}
 
 	if req.Credentials != nil {
-		account.Credentials = SanitizeStoredCredentials(account.Platform, *req.Credentials)
+		account.Credentials = SanitizeStoredCredentials(account.Platform, MergePreservingSensitiveCreds(account.Credentials, *req.Credentials))
 	}
 
 	if req.Extra != nil {
@@ -354,12 +341,6 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		delete(extra, OllamaCloudUsageSessionExtraKey)
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
-		// 透支探测状态由服务维护，完整编辑账号时也必须像其他运行态快照一样保留。
-		if account.Extra != nil {
-			if state, ok := account.Extra[CodexQuotaOverdraftProbeExtraKey]; ok {
-				extra[CodexQuotaOverdraftProbeExtraKey] = state
-			}
-		}
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, extra)
 	} else {
 		account.Extra = prepareCodexFingerprintExtraForUpdate(account, account.Extra)
@@ -371,9 +352,6 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 
 	if req.Concurrency != nil {
 		account.Concurrency = *req.Concurrency
-	}
-	if req.RateLimit429RetryCount != nil {
-		account.RateLimit429RetryCount = cloneAccountValuePointer(req.RateLimit429RetryCount)
 	}
 
 	if req.Priority != nil {
@@ -538,8 +516,8 @@ func (s *AccountService) TestCredentials(ctx context.Context, id int64) error {
 	case PlatformGrok:
 		// Grok OAuth credentials are validated via token exchange/refresh and request-path probes.
 		return nil
-	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
-		// 国产 OpenAI 兼容供应商：凭证为 API Key，实际可用性经余额/额度探测与转发路径验证。
+	case PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo:
+		// 国产 OpenAI 兼容供应商与 OpenCode：凭证为 API Key，实际可用性经余额/额度探测与转发路径验证。
 		return nil
 	default:
 		return fmt.Errorf("unsupported platform: %s", account.Platform)

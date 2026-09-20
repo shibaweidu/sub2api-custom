@@ -116,8 +116,23 @@
       </div>
     </template>
 
-    <!-- OpenAI OAuth accounts: single source from /usage API -->
-    <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
+    <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
+    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token')">
+      <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
+        <div
+          v-for="ticket in codexTurnTickets"
+          :key="ticket.model"
+          class="min-w-0 text-[10px] leading-4"
+        >
+          <div class="flex items-center gap-1">
+            <span class="truncate font-medium text-gray-500 dark:text-gray-400" :title="`${ticket.model} · ${t('admin.accounts.openai.codexTurnTicket', { length: ticket.target_length })}`">{{ shortCodexTicketModel(ticket.model) }}</span>
+            <span v-if="ticket.ready" class="text-emerald-600 dark:text-emerald-400">{{ formatCodexTicketRemaining(ticket.remaining_seconds) }}</span>
+            <span v-else-if="ticket.blocked" class="text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.codexTurnTicketPaused', { length: ticket.target_length }) }}</span>
+            <span v-else class="text-gray-500">{{ t('admin.accounts.openai.codexTurnTicketMissing', { length: ticket.target_length }) }}</span>
+          </div>
+          <CodexTicketDiagnostics :ticket="ticket" compact />
+        </div>
+      </div>
       <div v-if="hasOpenAIUsageFallback" class="space-y-1">
         <UsageProgressBar
           v-if="usageInfo?.five_hour"
@@ -186,6 +201,7 @@
         <div class="text-xs text-gray-400">-</div>
         <!-- Always allow on-demand upstream quota query, even before local data exists. -->
         <OpenAIQuotaResetCell
+          v-if="account.type === 'oauth'"
           :account="account"
           class="mt-1"
           @account-updated="handleQuotaResetAccountUpdated"
@@ -431,7 +447,7 @@
     </template>
 
     <!-- CN providers (Kimi / Zhipu / DeepSeek): coding-plan quota or payg balance -->
-    <template v-else-if="account.platform === 'kimi' || account.platform === 'zhipu' || account.platform === 'deepseek' || account.platform === 'minimax'">
+    <template v-else-if="account.platform === 'kimi' || account.platform === 'zhipu' || account.platform === 'deepseek' || account.platform === 'minimax' || account.platform === 'opencode_go'">
       <!-- 挂在 CN 平台下的 Ollama Cloud 账号（资格由后端下发 eligible）：用量由
            Ollama 用量窗口负责。这类账号不是国产厂商订阅，CN 的额度/余额探测端点由
            base_url 衍生，对 ollama.com 会被后端出站 URL 白名单拒绝，渲染出来只会
@@ -655,6 +671,7 @@ import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { enqueueUsageRequest } from '@/utils/usageLoadQueue'
 import { formatCompactNumber } from '@/utils/format'
 import UsageProgressBar from './UsageProgressBar.vue'
+import CodexTicketDiagnostics from './CodexTicketDiagnostics.vue'
 import AccountQuotaInfo from './AccountQuotaInfo.vue'
 import OpenAIQuotaResetCell from './OpenAIQuotaResetCell.vue'
 import GrokQuotaProbeCell from './GrokQuotaProbeCell.vue'
@@ -729,7 +746,8 @@ const showUsageWindows = computed(() => {
     props.account.platform === 'kimi' ||
     props.account.platform === 'zhipu' ||
     props.account.platform === 'deepseek' ||
-    props.account.platform === 'minimax'
+    props.account.platform === 'minimax' ||
+    props.account.platform === 'opencode_go'
   ) {
     return true
   }
@@ -785,6 +803,21 @@ const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
+
+const codexTurnTickets = computed(() => props.account.codex_ticket_config?.gateway_enabled === false ? [] : (props.account.codex_turn_tickets ?? []))
+
+function shortCodexTicketModel(model: string) {
+  if (model === 'gpt-6-astra') return 'astra'
+  if (model === 'gpt-5.6-sol') return 'sol'
+  return model
+}
+
+function formatCodexTicketRemaining(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds || 0))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}m${String(s).padStart(2, '0')}s`
+}
 
 const openAISevenDayEstimatedTotalCost = computed(() => {
   const sevenDay = usageInfo.value?.seven_day

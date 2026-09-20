@@ -241,6 +241,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/test-results',
+    name: 'TestResults',
+    component: () => import('@/views/user/TestResultsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Test Results', titleKey: 'tests.title', descriptionKey: 'tests.description' }
+  },
+  {
     path: '/redeem',
     name: 'Redeem',
     component: () => import('@/views/user/RedeemView.vue'),
@@ -263,6 +269,10 @@ const routes: RouteRecordRaw[] = [
       titleKey: 'affiliate.title',
       descriptionKey: 'affiliate.description'
     }
+  },
+  {
+    path: '/shared-pool', name: 'SharedPool', component: () => import('@/views/user/SharedPoolView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Shared Account Pool', titleKey: 'nav.sharedPool' }
   },
   {
     path: '/available-channels',
@@ -297,7 +307,8 @@ const routes: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'My Subscriptions',
       titleKey: 'userSubscriptions.title',
-      descriptionKey: 'userSubscriptions.description'
+      descriptionKey: 'userSubscriptions.description',
+      requiresSubscription: true
     }
   },
   {
@@ -426,6 +437,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/tests',
+    name: 'AdminTests',
+    component: () => import('@/views/admin/TestManagementView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Test Management', titleKey: 'admin.tests.title', descriptionKey: 'admin.tests.description' }
+  },
+  {
     path: '/admin/audit-logs',
     name: 'AdminAuditLogs',
     component: () => import('@/views/admin/AuditLogView.vue'),
@@ -522,6 +539,17 @@ const routes: RouteRecordRaw[] = [
       title: 'Account Management',
       titleKey: 'admin.accounts.title',
       descriptionKey: 'admin.accounts.description'
+    }
+  },
+  {
+    path: '/admin/shared-pool',
+    name: 'AdminSharedPool',
+    component: () => import('@/views/admin/SharedPoolAdminView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Shared Pool Management',
+      titleKey: 'nav.sharedPoolAdmin'
     }
   },
   {
@@ -907,7 +935,7 @@ router.beforeEach(async (to, _from, next) => {
   // 公共设置可能尚未加载（App.vue 的 onMounted 异步拉取晚于首次导航，且纯静态部署
   // 无 __APP_CONFIG__ 注入）。此时 cachedPublicSettings 为空会把 payment/risk_control
   // 误判为“未启用”而错误拦截，故这里先确保设置加载完成。
-  if ((to.meta.requiresPayment || to.meta.requiresRiskControl) && !appStore.publicSettingsLoaded) {
+  if ((to.meta.requiresPayment || to.meta.requiresRiskControl || to.meta.requiresSubscription) && !appStore.publicSettingsLoaded) {
     try {
       await appStore.fetchPublicSettings()
     } catch (error) {
@@ -932,6 +960,16 @@ router.beforeEach(async (to, _from, next) => {
     appStore.cachedPublicSettings?.risk_control_enabled === false
   ) {
     next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    return
+  }
+
+  // 订阅功能是 opt-out 开关：只有显式 false 才拦截「我的订阅」页直达。
+  if (
+    to.meta.requiresSubscription &&
+    appStore.publicSettingsLoaded &&
+    appStore.cachedPublicSettings?.subscription_enabled === false
+  ) {
+    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
     return
   }
 

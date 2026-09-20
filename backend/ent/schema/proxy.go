@@ -31,6 +31,7 @@ func (Proxy) Mixin() []ent.Mixin {
 
 func (Proxy) Fields() []ent.Field {
 	return []ent.Field{
+		field.Int64("owner_user_id").Optional().Nillable().Comment("Owner of a shared proxy; NULL for system proxies."),
 		field.String("name").
 			MaxLen(100).
 			NotEmpty(),
@@ -70,6 +71,7 @@ func (Proxy) Fields() []ent.Field {
 // Edges 定义代理实体的关联关系。
 func (Proxy) Edges() []ent.Edge {
 	return []ent.Edge{
+		edge.From("pool_accounts", Account.Type).Ref("proxies"),
 		// accounts: 使用此代理的账户（反向边）
 		edge.From("accounts", Account.Type).
 			Ref("proxy"),

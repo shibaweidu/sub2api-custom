@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, updateAdminSharedAccountMock, checkMixedChannelRiskMock, authIsSimpleMode, getSettingsMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
+  getSettingsMock: vi.fn().mockResolvedValue({ openai_codex_ticket_enabled: true }),
+  updateAdminSharedAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -32,7 +34,7 @@ vi.mock('@/api/admin', () => ({
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
-      getSettings: vi.fn().mockResolvedValue({})
+      getSettings: getSettingsMock
     },
     tlsFingerprintProfiles: {
       list: vi.fn().mockResolvedValue([])
@@ -42,6 +44,10 @@ vi.mock('@/api/admin', () => ({
 
 vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
+}))
+
+vi.mock('@/api/admin/sharedPool', () => ({
+  updateSharedAccount: updateAdminSharedAccountMock
 }))
 
 vi.mock('vue-i18n', async () => {
@@ -136,6 +142,24 @@ const GroupSelectorStub = defineComponent({
       >
         group
       </button>
+    </div>
+  `
+})
+
+const ProxySelectorStub = defineComponent({
+  name: 'ProxySelector',
+  props: {
+    modelValue: {
+      type: Array,
+      default: () => []
+    }
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <div data-testid="proxy-selector-stub">
+      <span data-testid="proxy-selector-value">{{ modelValue.join(',') }}</span>
+      <button type="button" data-testid="set-codex-harvest-proxies" @click="$emit('update:modelValue', [11, 12])">set harvest proxies</button>
+      <button type="button" data-testid="clear-codex-harvest-proxies" @click="$emit('update:modelValue', [])">clear harvest proxies</button>
     </div>
   `
 })
@@ -315,7 +339,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
         BaseDialog: BaseDialogStub,
         Select: SelectStub,
         Icon: true,
-        ProxySelector: true,
+        ProxySelector: ProxySelectorStub,
         GroupSelector: renderGroupSelector ? false : GroupSelectorStub,
         ModelWhitelistSelector: ModelWhitelistSelectorStub
       }
@@ -325,6 +349,7 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 
 describe('EditAccountModal', () => {
   beforeEach(() => {
+    getSettingsMock.mockReset().mockResolvedValue({ openai_codex_ticket_enabled: true })
     authIsSimpleMode.value = true
   })
 
@@ -442,6 +467,145 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
       'gpt-5.2': 'gpt-5.2'
+    })
+  })
+
+  it('passes the admin shared proxy input to the listing endpoint', async () => {
+    const account = buildAccount()
+    updateAdminSharedAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mount(EditAccountModal, {
+      props: {
+        show: true,
+        account,
+        sharedPool: true,
+        sharedPoolAdmin: true,
+        sharedListingId: 77,
+        proxies: [],
+        groups: []
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          Icon: true,
+          ProxySelector: true,
+          ModelWhitelistSelector: ModelWhitelistSelectorStub
+        }
+      }
+    })
+
+    await wrapper.get('#shared-account-proxy').setValue(' socks5://user:pass@proxy.example.com:1080 ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAdminSharedAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAdminSharedAccountMock.mock.calls[0]?.[0]).toBe(77)
+    expect(updateAdminSharedAccountMock.mock.calls[0]?.[1]?.proxy_url).toBe('socks5://user:pass@proxy.example.com:1080')
+    wrapper.unmount()
+  })
+
+  it('clears the transient shared proxy input when switching accounts', async () => {
+    const first = buildAccount()
+    const second = { ...buildAccount(), id: 2, name: 'Second account' }
+    const wrapper = mount(EditAccountModal, {
+      props: {
+        show: true,
+        account: first,
+        sharedPool: true,
+        sharedPoolAdmin: true,
+        sharedListingId: 77,
+        proxies: [],
+        groups: []
+      },
+      global: {
+        stubs: {
+          BaseDialog: BaseDialogStub,
+          Select: SelectStub,
+          Icon: true,
+          ProxySelector: true,
+          ModelWhitelistSelector: ModelWhitelistSelectorStub
+        }
+      }
+    })
+
+    await wrapper.get('#shared-account-proxy').setValue('http://proxy.example.com:8080')
+    await wrapper.setProps({ account: second })
+    expect(wrapper.get<HTMLInputElement>('#shared-account-proxy').element.value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('preserves OpenCode Zen account type and endpoints on submit', async () => {
+    const account = buildAccount()
+    account.platform = 'opencode_go'
+    account.credentials = {
+      api_key: 'sk-opencode',
+      account_mode: 'zen',
+      api_protocol: 'adaptive',
+      base_url: 'https://opencode.ai/zen/v1',
+      api_base_urls: {
+        chat_completions: 'https://opencode.ai/zen/v1',
+        anthropic: 'https://opencode.ai/zen',
+        responses: 'https://opencode.ai/zen/v1'
+      },
+      protocol_rules: [
+        { pattern: 'grok-*', protocol: 'responses' },
+        { pattern: 'gpt-*', protocol: 'responses' },
+        { pattern: 'muse-spark-*', protocol: 'responses' },
+        { pattern: 'claude-*', protocol: 'anthropic' },
+        { pattern: 'qwen*', protocol: 'anthropic' }
+      ]
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      account_mode: 'zen',
+      api_protocol: 'adaptive',
+      base_url: 'https://opencode.ai/zen/v1',
+      api_base_urls: {
+        chat_completions: 'https://opencode.ai/zen/v1',
+        anthropic: 'https://opencode.ai/zen',
+        responses: 'https://opencode.ai/zen/v1'
+      },
+      protocol_rules: [
+        { pattern: 'grok-*', protocol: 'responses' },
+        { pattern: 'gpt-*', protocol: 'responses' },
+        { pattern: 'muse-spark-*', protocol: 'responses' },
+        { pattern: 'claude-*', protocol: 'anthropic' },
+        { pattern: 'qwen*', protocol: 'anthropic' }
+      ]
+    })
+  })
+
+  it('treats a legacy OpenCode account without account_mode as GO', async () => {
+    const account = buildAccount()
+    account.platform = 'opencode_go'
+    account.credentials = {
+      api_key: 'sk-opencode',
+      api_protocol: 'adaptive',
+      base_url: 'https://opencode.ai/zen/go/v1',
+      api_base_urls: {
+        chat_completions: 'https://opencode.ai/zen/go/v1',
+        anthropic: 'https://opencode.ai/zen/go',
+        responses: 'https://opencode.ai/zen/go/v1'
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      account_mode: 'go',
+      api_protocol: 'adaptive',
+      base_url: 'https://opencode.ai/zen/go/v1'
     })
   })
 
@@ -870,34 +1034,17 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 
-  it('defaults Codex quota overdraft to off and submits the disabled state', async () => {
+  it('does not expose or add the removed quota extension when editing OAuth accounts', async () => {
     const account = buildOpenAIOAuthParentAccount()
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
 
     const wrapper = mountModal(account)
-    const toggle = wrapper.get('[data-testid="edit-codex-quota-overdraft-toggle"]')
-    expect(toggle.attributes('aria-checked')).toBe('false')
-
+    expect(wrapper.find('[data-testid="edit-codex-quota-overdraft-toggle"]').exists()).toBe(false)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_quota_overdraft_enabled).toBe(false)
-  })
-
-  it('loads an enabled Codex quota overdraft account and can turn it off', async () => {
-    const account = buildOpenAIOAuthParentAccount()
-    account.extra = { codex_quota_overdraft_enabled: true }
-    updateAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-
-    const wrapper = mountModal(account)
-    const toggle = wrapper.get('[data-testid="edit-codex-quota-overdraft-toggle"]')
-    expect(toggle.attributes('aria-checked')).toBe('true')
-
-    await toggle.trigger('click')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.codex_quota_overdraft_enabled).toBe(false)
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra ?? {}).not.toHaveProperty('codex_quota_overdraft_enabled')
   })
 
   it('does not render or submit the long-context billing toggle for Spark shadow accounts', async () => {
@@ -1267,6 +1414,19 @@ describe('EditAccountModal', () => {
 	  expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.auto_pause_7d_disabled).toBeUndefined()
 	})
 
+  it('preserves Seedance when exactly two endpoint capabilities are selected', async () => {
+    const account = buildAccount()
+    account.credentials.openai_capabilities = ['chat_completions', 'seedance']
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="openai-endpoint-capability-seedance"]').element.checked).toBe(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.openai_capabilities).toEqual(['chat_completions', 'seedance'])
+  })
+
   it('keeps at least one OpenAI APIKey endpoint capability selected', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
@@ -1438,6 +1598,116 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_oauth_responses_websockets_v2_enabled).toBe(true)
   })
 
+  it('edits account ticket switches without changing its business proxy or choosing harvest proxies', async () => {
+    const account = buildOpenAISetupTokenAccount()
+    account.proxy_id = 5
+    account.proxy_ids = [5]
+    account.extra = { codex_ticket_enabled: true, codex_ticket_fail_closed: false }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edit-codex-ticket-harvest-proxies"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="edit-codex-ticket-fail-closed"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.proxy_ids).toEqual([5])
+    expect(payload?.extra?.codex_ticket_enabled).toBe(true)
+    expect(payload?.extra?.codex_ticket_fail_closed).toBe(true)
+    expect(payload?.extra).not.toHaveProperty('codex_ticket_harvest_proxy_ids')
+  })
+
+  it.each(['disabled', 'unavailable'])('hides ticket settings and preserves account switches when gateway settings are %s', async (state) => {
+    if (state === 'disabled') getSettingsMock.mockResolvedValue({ openai_codex_ticket_enabled: false })
+    else getSettingsMock.mockRejectedValue(new Error('settings unavailable'))
+    const account = buildOpenAISetupTokenAccount()
+    account.extra = { codex_ticket_enabled: true, codex_ticket_fail_closed: false }
+    account.codex_ticket_config = {
+      gateway_enabled: false,
+      account_enabled: true,
+      enabled: false,
+      fail_closed: false,
+      target_length: 332,
+    }
+    account.codex_turn_tickets = [
+      { model: 'gpt-6-astra', target_length: 332, ready: false, remaining_seconds: 0, blocked: true, attempts: 12, last_error_code: 'network' },
+    ]
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edit-codex-ticket-config"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.accounts.openai.codexTurnTicketPaused')
+    expect(wrapper.find('[data-testid="codex-ticket-diagnostics"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject(account.extra)
+  })
+
+  it('shows per-model ticket diagnostics below the ticket status', async () => {
+    const account = buildOpenAISetupTokenAccount()
+    account.codex_turn_tickets = [{
+      model: 'gpt-6-astra', target_length: 332, ready: false, remaining_seconds: 0, blocked: true,
+      attempts: 12, last_length: 0, last_error_code: 'length_mismatch', plan_known: false,
+      next_retry_at: '2026-09-19T10:00:06Z',
+    }]
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const diagnostics = wrapper.get('[data-testid="codex-ticket-diagnostics"]')
+    expect(diagnostics.text()).toContain('codexTicketDiagnostics.lastError')
+    expect(diagnostics.text()).toContain('codexTicketDiagnostics.length')
+    expect(diagnostics.text()).toContain('codexTicketDiagnostics.nextRetry')
+    expect(diagnostics.text()).toContain('codexTicketDiagnostics.unknownPlan')
+  })
+
+  it('prefers explicit account booleans over resolved values', async () => {
+    const account = buildOpenAISetupTokenAccount()
+    account.extra = { codex_ticket_enabled: false, codex_ticket_fail_closed: true }
+    account.codex_ticket_config = {
+      gateway_enabled: true,
+      account_enabled: true,
+      enabled: true,
+      fail_closed: false,
+      target_length: 332,
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="edit-codex-ticket-enabled"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('[data-testid="edit-codex-ticket-enabled"]').trigger('click')
+    expect(wrapper.get('[data-testid="edit-codex-ticket-fail-closed"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      codex_ticket_enabled: true,
+      codex_ticket_fail_closed: true,
+    })
+  })
+
+  it('defaults first-time enable to fail-closed and preserves a saved fail-open account', async () => {
+    const account = buildOpenAISetupTokenAccount()
+    account.extra = {}
+    account.codex_ticket_config = {
+      gateway_enabled: true,
+      account_enabled: false,
+      enabled: false,
+      fail_closed: false,
+      target_length: 292,
+    }
+    const wrapper = mountModal(account)
+    await flushPromises()
+    await wrapper.get('[data-testid="edit-codex-ticket-enabled"]').trigger('click')
+    expect(wrapper.get('[data-testid="edit-codex-ticket-fail-closed"]').attributes('aria-checked')).toBe('true')
+
+    await wrapper.setProps({ account: {
+      ...account,
+      id: 9,
+      codex_ticket_config: { ...account.codex_ticket_config, account_enabled: true, enabled: true },
+    } })
+    expect(wrapper.get('[data-testid="edit-codex-ticket-fail-closed"]').attributes('aria-checked')).toBe('false')
+  })
+
   it('allows saving apikey account when backend redacted api_key but credentials_status reports it exists', async () => {
     // 新前端 + 新后端：响应已脱敏，credentials 里没有 api_key，credentials_status.has_api_key=true
     const account = buildAccount()
@@ -1598,6 +1868,7 @@ describe('EditAccountModal', () => {
 
 describe('EditAccountModal OpenAI 自动使用重置卡', () => {
   beforeEach(() => {
+    getSettingsMock.mockReset().mockResolvedValue({ openai_codex_ticket_enabled: true })
     authIsSimpleMode.value = true
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })

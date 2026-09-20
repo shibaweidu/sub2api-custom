@@ -20,8 +20,6 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `install-custom-docker.sh` | One-command custom Docker deployment plus host updater installation |
 | `install-source-updater.sh` | Installs the restricted systemd updater for an existing Compose instance |
 | `Dockerfile.updater` | Reproducible builder image for the host updater binary |
-| `docker-compose.overdraft.yml` | Legacy source-build overlay kept for existing deployments |
-| `docker-compose.coexist.yml` | Legacy isolation overlay for existing deployments using the old container names |
 | `docker-deploy.sh` | Legacy upstream preparation script |
 | `apple-container.sh` | Native Apple `container` lifecycle script |
 | `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |
@@ -48,7 +46,7 @@ Apple-silicon Macs running macOS 26 can run the complete Sub2API, PostgreSQL, an
 ./apple-container.sh logs app -f
 ```
 
-The script uses Apple named volumes, starts dependencies in order, and performs live readiness checks. It does not provide a continuous restart supervisor; run `./apple-container.sh up` after a host reboot. Docker Compose remains the recommended production deployment path.
+The script uses Apple named volumes, starts dependencies in order, and performs live readiness checks. The application container supervises the Sub2API process so the Web UI's update-and-restart flow can relaunch an updated binary. It does not provide host-level automatic startup; run `./apple-container.sh up` after a host reboot. Docker Compose remains the recommended production deployment path.
 
 See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, persistence, networking behavior, and limitations.
 

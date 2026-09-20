@@ -12,6 +12,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestChannelMonitorV2DateBinOriginIsUTC(t *testing.T) {
+	require.Equal(t, "TIMESTAMPTZ '1970-01-01 00:00:00+00'", channelMonitorV2DateBinOrigin)
+	require.Equal(t, "date_bin($1::interval,m.bucket_start,TIMESTAMPTZ '1970-01-01 00:00:00+00')", channelMonitorV2DateBinExpr("m.bucket_start"))
+
+	for _, query := range []string{
+		channelMonitorV2FixedRollupBoundsSQL,
+		channelMonitorV2MetricsRollupSQL,
+		channelMonitorV2UserMetricsRollupSQL,
+		channelMonitorV2HistogramRollupSQL,
+		channelMonitorV2ErrorRollupSQL,
+	} {
+		require.Contains(t, query, channelMonitorV2DateBinOrigin)
+		require.NotContains(t, query, "TIMESTAMPTZ '1970-01-01'")
+	}
+}
+
 func TestChannelMonitorV2DisplayModelIsPlatformScoped(t *testing.T) {
 	cfg := service.ChannelMonitorV2Config{Platforms: []service.ChannelMonitorV2PlatformConfig{
 		{Platform: "openai", Enabled: true, Models: []string{"shared", "gpt-5"}},
@@ -292,10 +308,30 @@ func TestChannelMonitorV2UsageSuccessExcludesCyberBillingRows(t *testing.T) {
 	for _, query := range []string{channelMonitorV2UsageMetricsSQL, channelMonitorV2UserMetricsSQL} {
 		require.Contains(t, query, "COALESCE(ul.request_type, 0) NOT IN (4, 6)")
 		require.Contains(t, query, "ul.actual_cost > 0")
+		require.Contains(t, query, "cache_eligible_input_tokens")
+		require.Contains(t, query, "ul.stream = TRUE OR ul.openai_ws_mode = TRUE")
 	}
 	require.Contains(t, channelMonitorV2PlatformSQL, "g.platform = 'composite'")
 	require.Contains(t, channelMonitorV2PlatformSQL, "a.platform")
 	require.Contains(t, channelMonitorV2HistogramSQL, "ul.actual_cost > 0")
+}
+
+func TestChannelMonitorV2SyncTrafficDoesNotBecomeCacheMisses(t *testing.T) {
+	acc := newMetricAccumulator()
+	acc.addFact(channelMonitorV2Fact{Success: 1, Input: 100, Output: 20})
+	m := acc.metric(1, true)
+	require.Equal(t, int64(1), m.RequestCount)
+	require.Equal(t, int64(100), m.InputTokens)
+	require.Zero(t, m.CacheEligibleInputTokens)
+	require.Zero(t, m.CacheRateDenominator)
+	require.Zero(t, m.CacheRate)
+
+	acc.addFact(channelMonitorV2Fact{Success: 1, Input: 100, CacheEligibleInput: 100, CacheRead: 80})
+	m = acc.metric(1, true)
+	require.Equal(t, int64(200), m.InputTokens)
+	require.Equal(t, int64(100), m.CacheEligibleInputTokens)
+	require.Equal(t, int64(180), m.CacheRateDenominator)
+	require.InDelta(t, 80.0/180.0, m.CacheRate, 0.0001)
 }
 
 func TestChannelMonitorV2RatesUseCoveredWindow(t *testing.T) {

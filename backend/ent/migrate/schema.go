@@ -115,11 +115,11 @@ var (
 		{Name: "notes", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "platform", Type: field.TypeString, Size: 50},
 		{Name: "type", Type: field.TypeString, Size: 20},
+		{Name: "account_scope", Type: field.TypeString, Size: 20, Default: "system"},
 		{Name: "credentials", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "extra", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "proxy_fallback_origin_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "concurrency", Type: field.TypeInt, Default: 3},
-		{Name: "rate_limit_429_retry_count", Type: field.TypeInt, Default: 5},
 		{Name: "load_factor", Type: field.TypeInt, Nullable: true},
 		{Name: "priority", Type: field.TypeInt, Default: 50},
 		{Name: "rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
@@ -269,6 +269,45 @@ var (
 				Name:    "accountgroup_priority",
 				Unique:  false,
 				Columns: []*schema.Column{AccountGroupsColumns[0]},
+			},
+		},
+	}
+	// AccountProxiesColumns holds the columns for the "account_proxies" table.
+	AccountProxiesColumns = []*schema.Column{
+		{Name: "position", Type: field.TypeInt, Default: 0},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "account_id", Type: field.TypeInt64},
+		{Name: "proxy_id", Type: field.TypeInt64},
+	}
+	// AccountProxiesTable holds the schema information for the "account_proxies" table.
+	AccountProxiesTable = &schema.Table{
+		Name:       "account_proxies",
+		Columns:    AccountProxiesColumns,
+		PrimaryKey: []*schema.Column{AccountProxiesColumns[2], AccountProxiesColumns[3]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "account_proxies_accounts_account",
+				Columns:    []*schema.Column{AccountProxiesColumns[2]},
+				RefColumns: []*schema.Column{AccountsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+			{
+				Symbol:     "account_proxies_proxies_proxy",
+				Columns:    []*schema.Column{AccountProxiesColumns[3]},
+				RefColumns: []*schema.Column{ProxiesColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "idx_account_proxies_proxy_id",
+				Unique:  false,
+				Columns: []*schema.Column{AccountProxiesColumns[3]},
+			},
+			{
+				Name:    "idx_account_proxies_account_position",
+				Unique:  false,
+				Columns: []*schema.Column{AccountProxiesColumns[2], AccountProxiesColumns[0]},
 			},
 		},
 	}
@@ -637,7 +676,7 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "name", Type: field.TypeString, Size: 100},
-		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek", "minimax"}},
+		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek", "minimax", "opencode_go"}},
 		{Name: "check_mode", Type: field.TypeString, Size: 32, Default: "probe"},
 		{Name: "account_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "api_mode", Type: field.TypeString, Size: 32, Default: "chat_completions"},
@@ -790,7 +829,7 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "name", Type: field.TypeString, Size: 100},
-		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek", "minimax"}},
+		{Name: "provider", Type: field.TypeEnum, Enums: []string{"openai", "anthropic", "gemini", "grok", "antigravity", "kimi", "zhipu", "deepseek", "minimax", "opencode_go"}},
 		{Name: "api_mode", Type: field.TypeString, Size: 32, Default: "chat_completions"},
 		{Name: "description", Type: field.TypeString, Nullable: true, Size: 500, Default: ""},
 		{Name: "extra_headers", Type: field.TypeJSON},
@@ -927,6 +966,7 @@ var (
 		{Name: "peak_start", Type: field.TypeString, Size: 5, Default: ""},
 		{Name: "peak_end", Type: field.TypeString, Size: 5, Default: ""},
 		{Name: "peak_rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "is_shared_pool", Type: field.TypeBool, Default: false},
 		{Name: "is_exclusive", Type: field.TypeBool, Default: false},
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "duplicate_operation_id", Type: field.TypeString, Nullable: true, Size: 64},
@@ -994,22 +1034,22 @@ var (
 			{
 				Name:    "group_status",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[12]},
+				Columns: []*schema.Column{GroupsColumns[13]},
 			},
 			{
 				Name:    "group_platform",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[14]},
+				Columns: []*schema.Column{GroupsColumns[15]},
 			},
 			{
 				Name:    "group_subscription_type",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[15]},
+				Columns: []*schema.Column{GroupsColumns[16]},
 			},
 			{
 				Name:    "group_is_exclusive",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[11]},
+				Columns: []*schema.Column{GroupsColumns[12]},
 			},
 			{
 				Name:    "group_deleted_at",
@@ -1019,12 +1059,12 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[49]},
+				Columns: []*schema.Column{GroupsColumns[50]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
 				Unique:  true,
-				Columns: []*schema.Column{GroupsColumns[13]},
+				Columns: []*schema.Column{GroupsColumns[14]},
 				Annotation: &entsql.IndexAnnotation{
 					Where: "duplicate_operation_id IS NOT NULL AND deleted_at IS NULL",
 				},
@@ -1418,6 +1458,7 @@ var (
 		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "owner_user_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "name", Type: field.TypeString, Size: 100},
 		{Name: "protocol", Type: field.TypeString, Size: 20},
 		{Name: "host", Type: field.TypeString, Size: 255},
@@ -1438,7 +1479,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "proxies_proxies_backup_proxy",
-				Columns:    []*schema.Column{ProxiesColumns[14]},
+				Columns:    []*schema.Column{ProxiesColumns[15]},
 				RefColumns: []*schema.Column{ProxiesColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1447,7 +1488,7 @@ var (
 			{
 				Name:    "proxy_status",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[10]},
+				Columns: []*schema.Column{ProxiesColumns[11]},
 			},
 			{
 				Name:    "proxy_deleted_at",
@@ -1457,12 +1498,12 @@ var (
 			{
 				Name:    "proxy_expires_at",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[11]},
+				Columns: []*schema.Column{ProxiesColumns[12]},
 			},
 			{
 				Name:    "proxy_backup_proxy_id",
 				Unique:  false,
-				Columns: []*schema.Column{ProxiesColumns[14]},
+				Columns: []*schema.Column{ProxiesColumns[15]},
 			},
 		},
 	}
@@ -1549,6 +1590,85 @@ var (
 		Name:       "settings",
 		Columns:    SettingsColumns,
 		PrimaryKey: []*schema.Column{SettingsColumns[0]},
+	}
+	// SharedAccountListingsColumns holds the columns for the "shared_account_listings" table.
+	SharedAccountListingsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "owner_user_id", Type: field.TypeInt64},
+		{Name: "account_id", Type: field.TypeInt64, Unique: true},
+		{Name: "platform", Type: field.TypeString, Size: 50},
+		{Name: "display_name", Type: field.TypeString, Size: 100},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "testing"},
+		{Name: "proxy_config_encrypted", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "concurrency_limit", Type: field.TypeInt, Default: 1},
+		{Name: "concurrency_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "sell_rate", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
+		{Name: "fee_rate_override", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(7,4)"}},
+		{Name: "total_call_count", Type: field.TypeInt64, Default: 0},
+		{Name: "last_called_at", Type: field.TypeTime, Nullable: true},
+	}
+	// SharedAccountListingsTable holds the schema information for the "shared_account_listings" table.
+	SharedAccountListingsTable = &schema.Table{
+		Name:       "shared_account_listings",
+		Columns:    SharedAccountListingsColumns,
+		PrimaryKey: []*schema.Column{SharedAccountListingsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sharedaccountlisting_owner_user_id_status",
+				Unique:  false,
+				Columns: []*schema.Column{SharedAccountListingsColumns[4], SharedAccountListingsColumns[8]},
+			},
+			{
+				Name:    "sharedaccountlisting_platform_status",
+				Unique:  false,
+				Columns: []*schema.Column{SharedAccountListingsColumns[6], SharedAccountListingsColumns[8]},
+			},
+		},
+	}
+	// SharedAccountUsageLedgerColumns holds the columns for the "shared_account_usage_ledger" table.
+	SharedAccountUsageLedgerColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "request_id", Type: field.TypeString, Unique: true, Size: 255},
+		{Name: "usage_log_id", Type: field.TypeInt64, Unique: true, Nullable: true},
+		{Name: "listing_id", Type: field.TypeInt64},
+		{Name: "owner_user_id", Type: field.TypeInt64},
+		{Name: "consumer_user_id", Type: field.TypeInt64},
+		{Name: "gross_cost", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "fee_rate_percent", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(7,4)"}},
+		{Name: "platform_fee", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "owner_amount", Type: field.TypeFloat64, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "action", Type: field.TypeString, Size: 20, Default: "earn"},
+		{Name: "frozen_until", Type: field.TypeTime, Nullable: true},
+		{Name: "released_at", Type: field.TypeTime, Nullable: true},
+	}
+	// SharedAccountUsageLedgerTable holds the schema information for the "shared_account_usage_ledger" table.
+	SharedAccountUsageLedgerTable = &schema.Table{
+		Name:       "shared_account_usage_ledger",
+		Columns:    SharedAccountUsageLedgerColumns,
+		PrimaryKey: []*schema.Column{SharedAccountUsageLedgerColumns[0]},
+	}
+	// SharedAccountWalletsColumns holds the columns for the "shared_account_wallets" table.
+	SharedAccountWalletsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "user_id", Type: field.TypeInt64, Unique: true},
+		{Name: "pending_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "available_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "frozen_amount", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "total_earned", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+		{Name: "total_transferred", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
+	}
+	// SharedAccountWalletsTable holds the schema information for the "shared_account_wallets" table.
+	SharedAccountWalletsTable = &schema.Table{
+		Name:       "shared_account_wallets",
+		Columns:    SharedAccountWalletsColumns,
+		PrimaryKey: []*schema.Column{SharedAccountWalletsColumns[0]},
 	}
 	// SubscriptionPlansColumns holds the columns for the "subscription_plans" table.
 	SubscriptionPlansColumns = []*schema.Column{
@@ -2106,6 +2226,7 @@ var (
 		APIKeysTable,
 		AccountsTable,
 		AccountGroupsTable,
+		AccountProxiesTable,
 		AnnouncementsTable,
 		AnnouncementReadsTable,
 		AuthIdentitiesTable,
@@ -2132,6 +2253,9 @@ var (
 		RedeemCodesTable,
 		SecuritySecretsTable,
 		SettingsTable,
+		SharedAccountListingsTable,
+		SharedAccountUsageLedgerTable,
+		SharedAccountWalletsTable,
 		SubscriptionPlansTable,
 		TLSFingerprintProfilesTable,
 		UsageCleanupTasksTable,
@@ -2161,6 +2285,11 @@ func init() {
 	AccountGroupsTable.ForeignKeys[1].RefTable = GroupsTable
 	AccountGroupsTable.Annotation = &entsql.Annotation{
 		Table: "account_groups",
+	}
+	AccountProxiesTable.ForeignKeys[0].RefTable = AccountsTable
+	AccountProxiesTable.ForeignKeys[1].RefTable = ProxiesTable
+	AccountProxiesTable.Annotation = &entsql.Annotation{
+		Table: "account_proxies",
 	}
 	AnnouncementsTable.Annotation = &entsql.Annotation{
 		Table: "announcements",
@@ -2256,6 +2385,15 @@ func init() {
 	}
 	SettingsTable.Annotation = &entsql.Annotation{
 		Table: "settings",
+	}
+	SharedAccountListingsTable.Annotation = &entsql.Annotation{
+		Table: "shared_account_listings",
+	}
+	SharedAccountUsageLedgerTable.Annotation = &entsql.Annotation{
+		Table: "shared_account_usage_ledger",
+	}
+	SharedAccountWalletsTable.Annotation = &entsql.Annotation{
+		Table: "shared_account_wallets",
 	}
 	SubscriptionPlansTable.Annotation = &entsql.Annotation{
 		Table: "subscription_plans",

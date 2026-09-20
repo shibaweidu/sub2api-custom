@@ -785,6 +785,81 @@ func TestBuildCodexModelsManifestForGroupUsesProviderImageCapabilities(t *testin
 	}
 }
 
+func TestBuildCodexModelsManifestForGroupUsesDeepSeekVisionCapabilities(t *testing.T) {
+	t.Parallel()
+
+	const visionModel = "deepseek-v4-flash-vision-exp"
+	newAccount := func(id int64, platform, model string, modalities []string) Account {
+		account := Account{
+			ID: id, Platform: platform, Type: AccountTypeAPIKey,
+			Credentials: map[string]any{"model_mapping": map[string]any{"vision-alias": model}},
+		}
+		if modalities != nil {
+			account.SetUpstreamModelMetadataSnapshot(UpstreamModelMetadataSnapshot{Models: map[string]UpstreamModelMetadata{
+				model: {ID: model, InputModalities: modalities},
+			}})
+		}
+		return account
+	}
+
+	tests := []struct {
+		name       string
+		platform   string
+		accounts   []Account
+		modalities []any
+	}{
+		{
+			name: "native DeepSeek", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "OpenAI-compatible DeepSeek", platform: PlatformOpenAI,
+			accounts:   []Account{newAccount(1, PlatformOpenAI, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "Composite DeepSeek alias", platform: PlatformComposite,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, nil)},
+			modalities: []any{"text", "image"},
+		},
+		{
+			name: "text-only DeepSeek Flash", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, "deepseek-v4-flash", nil)},
+			modalities: []any{"text"},
+		},
+		{
+			name: "explicit text-only metadata", platform: PlatformDeepseek,
+			accounts:   []Account{newAccount(1, PlatformDeepseek, visionModel, []string{"text"})},
+			modalities: []any{"text"},
+		},
+		{
+			name: "mixed vision and text-only alias", platform: PlatformDeepseek,
+			accounts: []Account{
+				newAccount(1, PlatformDeepseek, visionModel, nil),
+				newAccount(2, PlatformDeepseek, "deepseek-v4-flash", nil),
+			},
+			modalities: []any{"text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const groupID int64 = 790
+			svc := &GatewayService{accountRepo: codexModelsVisibilityAccountRepo{byGroup: map[int64][]Account{
+				groupID: tt.accounts,
+			}}}
+			body, err := svc.BuildCodexModelsManifestForGroup(context.Background(),
+				&Group{ID: groupID, Platform: tt.platform}, "", []string{"vision-alias"})
+			require.NoError(t, err)
+			models := decodeCodexManifestModels(t, body)
+			require.Len(t, models, 1)
+			require.Equal(t, tt.modalities, models[0]["input_modalities"])
+		})
+	}
+}
+
 func TestBuildCodexModelsManifestForGroupPrefersSyncedOpenAIImageCapabilities(t *testing.T) {
 	t.Parallel()
 
@@ -1667,33 +1742,6 @@ func TestFetchCodexModelsManifestPassthrough(t *testing.T) {
 	}
 }
 
-func TestFetchCodexModelsManifestReturnsOAuth429WithoutSameAccountRetry(t *testing.T) {
-	manifestBody := `{"models":[{"slug":"gpt-5.5"}]}`
-	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if calls.Add(1) <= 2 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":"rate limited"}`))
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(manifestBody))
-	}))
-	defer server.Close()
-
-	original := chatgptCodexModelsURL
-	chatgptCodexModelsURL = server.URL
-	defer func() { chatgptCodexModelsURL = original }()
-
-	account := newCodexModelsTestAccount()
-	account.RateLimit429RetryCount = retryCountPointer(2)
-	manifest, err := (&OpenAIGatewayService{}).FetchCodexModelsManifest(context.Background(), account, "0.144.0", "")
-	require.Error(t, err)
-	require.Nil(t, manifest)
-	require.Equal(t, int32(1), calls.Load())
-}
-
 func TestFetchCodexModelsManifestAgentIdentityUsesAssertionWithoutOAuthToken(t *testing.T) {
 	key, privateKey := newTestAgentIdentityKey(t)
 	account := &Account{
@@ -2014,39 +2062,6 @@ func TestFetchCodexModelsManifestAPIKeyCompleteBodyWithoutUpstreamETagUsesFinalB
 	require.NoError(t, svc.MergeGroupConfiguredCodexModels(context.Background(), group, second, first.ETag))
 	require.True(t, second.NotModified)
 	require.Empty(t, second.Body)
-	require.Equal(t, int32(1), calls.Load())
-}
-
-func TestFetchCodexModelsManifestReturnsAPIKey429WithoutSameAccountRetry(t *testing.T) {
-	manifestBody := `{"models":[{"slug":"gpt-5.6"}]}`
-	var calls atomic.Int32
-	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
-		if calls.Add(1) <= 2 {
-			return &http.Response{
-				StatusCode: http.StatusTooManyRequests,
-				Header:     http.Header{"Retry-After": []string{"0"}},
-				Body:       io.NopCloser(strings.NewReader(`{"error":"rate limited"}`)),
-				Request:    req,
-			}, nil
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(manifestBody)),
-			Request:    req,
-		}, nil
-	}}
-
-	account := newCodexModelsAPIKeyTestAccount("https://retry-upstream.example/v1")
-	account.RateLimit429RetryCount = retryCountPointer(2)
-	manifest, err := newCodexModelsAPIKeyTestService(upstream).FetchCodexModelsManifest(
-		context.Background(),
-		account,
-		"0.144.0",
-		"",
-	)
-	require.Error(t, err)
-	require.Nil(t, manifest)
 	require.Equal(t, int32(1), calls.Load())
 }
 
@@ -2547,6 +2562,11 @@ func TestFetchCodexModelsManifestRejectsInvalidEnvelope(t *testing.T) {
 	}
 }
 
+func TestValidateCodexModelsManifestEnvelopeRequiresExactModelsKey(t *testing.T) {
+	require.NoError(t, validateCodexModelsManifestEnvelope([]byte(`{"models":[]}`)))
+	require.Error(t, validateCodexModelsManifestEnvelope([]byte(`{"Models":[]}`)))
+}
+
 func TestFetchCodexModelsManifestAPIKeyDoesNotCacheInvalidEnvelope(t *testing.T) {
 	var calls atomic.Int32
 	upstream := &codexModelsHTTPUpstreamStub{do: func(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -2621,9 +2641,8 @@ func TestFetchCodexModelsManifestAPIKeySharedRefreshSurvivesCallerCancellation(t
 		t.Fatal("upstream body read did not start")
 	}
 	remaining := <-deadlineRemaining
-	expectedTimeout := account429RetryTotalTimeout(codexModelsManifestRequestTimeout, account)
-	if remaining < expectedTimeout-time.Second || remaining > expectedTimeout {
-		t.Errorf("detached refresh deadline: got %s, want approximately %s", remaining, expectedTimeout)
+	if remaining < 14*time.Second || remaining > codexModelsManifestRequestTimeout {
+		t.Errorf("detached refresh deadline: got %s, want approximately %s", remaining, codexModelsManifestRequestTimeout)
 	}
 	cancelFirst()
 	select {

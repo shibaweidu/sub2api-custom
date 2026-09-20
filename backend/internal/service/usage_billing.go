@@ -27,6 +27,7 @@ type UsageBillingCommand struct {
 	SubscriptionID      *int64
 	AccountType         string
 	Model               string
+	DurationMS          int
 	ServiceTier         string
 	ReasoningEffort     string
 	BillingType         int8
@@ -37,11 +38,13 @@ type UsageBillingCommand struct {
 	ImageCount          int
 	MediaType           string
 
-	BalanceCost         float64
-	SubscriptionCost    float64
-	APIKeyQuotaCost     float64
-	APIKeyRateLimitCost float64
-	AccountQuotaCost    float64
+	BalanceCost                 float64
+	SubscriptionCost            float64
+	APIKeyQuotaCost             float64
+	APIKeyRateLimitCost         float64
+	AccountQuotaCost            float64
+	SharedAccountFeeRatePercent *float64
+	SharedAccountFreezeHours    int
 }
 
 func (c *UsageBillingCommand) Normalize() {

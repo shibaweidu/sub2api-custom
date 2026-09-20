@@ -471,7 +471,7 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeadersDeviceModePreservesNamespacedC
 	require.Equal(t, scopeCodexAccountIdentityValue(account, 0, "request", "client-request"), headers.Get("x-client-request-id"))
 }
 
-func TestOpenAIGatewayService_BuildOpenAIWSHeaders_DefaultFingerprintIsStablePerAccount(t *testing.T) {
+func TestOpenAIGatewayService_BuildOpenAIWSHeaders_SingleMachineFingerprintIsStablePerAccount(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -480,10 +480,8 @@ func TestOpenAIGatewayService_BuildOpenAIWSHeaders_DefaultFingerprintIsStablePer
 	c.Request.Header.Set("X-Codex-Installation-ID", "client-installation")
 	c.Request.Header.Set("session-id", "client-session")
 
-	account := &Account{ID: 1301, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
-	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		OpenAIAccountUniqueFingerprintEnabled: true,
-	}}}
+	account := &Account{ID: 1301, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{codexFingerprintModeExtraKey: "single_machine_multi_window"}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{}}}
 
 	first, _, err := svc.buildOpenAIWSHeaders(
 		context.Background(), c, account, "token",
@@ -814,6 +812,7 @@ func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T
 		},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
+			codexFingerprintModeExtraKey:      "off",
 		},
 	}
 
@@ -1115,6 +1114,7 @@ func TestOpenAIGatewayService_Forward_WSv2_HeaderSessionFallbackFromPromptCacheK
 		},
 		Extra: map[string]any{
 			"responses_websockets_v2_enabled": true,
+			codexFingerprintModeExtraKey:      "off",
 		},
 	}
 
@@ -1437,7 +1437,9 @@ func TestOpenAIGatewayService_Forward_WSv2_TurnStateAndMetadataReplayOnReconnect
 	require.NoError(t, err)
 	require.NotNil(t, result1)
 
-	sessionHash := svc.GenerateSessionHash(c1, reqBody)
+	// 会话级状态按执行作用域取键（显式 session_id 也在其中），不再是原会话哈希。
+	sessionHash, _ := resolveOpenAIWSExecutionScope(c1, reqBody, getAPIKeyIDFromContext(c1))
+	require.NotEmpty(t, sessionHash)
 	store := svc.getOpenAIWSStateStore()
 	turnState, ok := store.GetSessionTurnState(0, sessionHash)
 	require.True(t, ok)

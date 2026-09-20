@@ -34,6 +34,12 @@ const (
 )
 
 func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode int) bool {
+	// Payment-required is an account billing condition, not a transient
+	// request failure. Fail over immediately instead of replaying the same
+	// billable request several times against an account with no credit.
+	if statusCode == http.StatusPaymentRequired {
+		return false
+	}
 	// OAuth/Setup Token 账号：仅 403 重试
 	if account.IsOAuth() {
 		return statusCode == 403
@@ -46,7 +52,7 @@ func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode i
 // shouldFailoverUpstreamError determines whether an upstream error should trigger account failover.
 func (s *GatewayService) shouldFailoverUpstreamError(statusCode int) bool {
 	switch statusCode {
-	case 401, 403, 429, 529:
+	case 401, 402, 403, 429, 529:
 		return true
 	default:
 		return statusCode >= 500
@@ -201,20 +207,15 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// Code..." system prompt 但缺少 billing attribution block，导致 Anthropic
 		// 检测到"有 CC prompt 但无 billing block"的不一致而判为 third-party。
 		// Parrot 的 transform_request 从不检查客户端 system 内容，直接覆盖。
-		systemRewritten := false
 		systemRaw, _ := parsed.SystemValue()
 		systemPromptInjectionEnabled, systemPrompt, systemPromptBlocks := s.claudeOAuthSystemPromptInjectionSettings(ctx)
 		if systemPromptInjectionEnabled {
 			if err := replaceBody(rewriteSystemForNonClaudeCodeWithPromptBlocks(body, systemRaw, systemPrompt, systemPromptBlocks)); err != nil {
 				return nil, err
 			}
-			systemRewritten = true
 		}
 
-		// system 被重写时保留 CC prompt 的 cache_control: ephemeral（匹配真实 Claude Code 行为）；
-		// 未重写时（注入开关关闭）剥离客户端 cache_control，与原有行为一致。
-		// 两种情况下 enforceCacheControlLimit 都会兜底处理上限。
-		normalizeOpts := claudeOAuthNormalizeOptions{stripSystemCacheControl: !systemRewritten}
+		normalizeOpts := claudeOAuthNormalizeOptions{}
 		if s.identityService != nil && c != nil {
 			fp, err := s.identityService.GetOrCreateFingerprint(ctx, account.ID, c.Request.Header)
 			if err == nil && fp != nil {
@@ -375,6 +376,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var resp *http.Response
 	lastWireBody := body
 	retryStart := time.Now()
+	billingRetryBypass := false
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
@@ -387,7 +389,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		lastWireBody = wireBody
 
 		// 发送请求
-		resp, err = doAccountHTTPUpstreamWithTLS(s.httpUpstream, upstreamReq, proxyURL, account, tlsProfile)
+		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -435,7 +437,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 					// 避免在重试预算已耗尽时再发起额外请求
 					if time.Since(retryStart) >= maxRetryElapsed {
-						resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+						resp.Body = io.NopCloser(bytes.NewReader(respBody))
 						break
 					}
 					logger.LegacyPrintf("service.gateway", "[warn] Account %d: thinking blocks have invalid signature, retrying with filtered blocks", account.ID)
@@ -450,7 +452,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 					releaseRetryCtx()
 					if buildErr == nil {
-						retryResp, retryErr := doAccountHTTPUpstreamWithTLS(s.httpUpstream, retryReq, proxyURL, account, tlsProfile)
+						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
 								// 重试请求被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
@@ -493,7 +495,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									retryReq2, retryWireBody2, buildErr2 := s.buildUpstreamRequest(retryCtx2, c, account, filteredBody2, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 									releaseRetryCtx2()
 									if buildErr2 == nil {
-										retryResp2, retryErr2 := doAccountHTTPUpstreamWithTLS(s.httpUpstream, retryReq2, proxyURL, account, tlsProfile)
+										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if retryErr2 == nil {
 											if retryResp2.StatusCode < 400 {
 												// 二阶段工具块降级成功时也必须更新当前 body。
@@ -531,8 +533,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 							resp = &http.Response{
 								StatusCode: retryResp.StatusCode,
 								Header:     retryResp.Header.Clone(),
-								Body:       preserveAccount429RetryMarker(retryResp, io.NopCloser(bytes.NewReader(retryRespBody))),
-								Request:    retryResp.Request,
+								Body:       io.NopCloser(bytes.NewReader(retryRespBody)),
 							}
 							break
 						}
@@ -545,7 +546,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					}
 
 					// Retry failed: restore original response body and continue handling.
-					resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+					resp.Body = io.NopCloser(bytes.NewReader(respBody))
 					break
 				}
 				// 不是签名错误（或整流器已关闭），继续检查 budget 约束
@@ -577,7 +578,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						budgetRetryReq, budgetWireBody, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
-							budgetRetryResp, retryErr := doAccountHTTPUpstreamWithTLS(s.httpUpstream, budgetRetryReq, proxyURL, account, tlsProfile)
+							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if retryErr == nil {
 								if budgetRetryResp.StatusCode < 400 {
 									// budget 修正请求成功后，ParsedRequest 也要描述被接受的修正版。
@@ -600,12 +601,21 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					}
 				}
 
-				resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+				resp.Body = io.NopCloser(bytes.NewReader(respBody))
 			}
 		}
 
-		// 检查是否需要通用重试（排除400，因为400已经在上面特殊处理过了）
+		// 检查是否需要通用重试（排除400，因为400已经在上面特殊处理过了）。
+		// OAuth 账号原本会按状态码重试 403；部分供应商却用 403 表示余额不足。
+		// 在重放请求前检查错误信封，明确的计费错误应立即切换账号。
 		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
+			respBody, readErr := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			if (readErr == nil || resp.StatusCode == http.StatusPaymentRequired) && IsUpstreamBillingError(resp.StatusCode, respBody) {
+				billingRetryBypass = true
+				break
+			}
 			if attempt < maxRetryAttempts {
 				elapsed := time.Since(retryStart)
 				if elapsed >= maxRetryElapsed {
@@ -621,8 +631,6 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					break
 				}
 
-				respBody, _ := s.readUpstreamErrorBody(resp)
-				_ = resp.Body.Close()
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					ProxyID:            opsUpstreamProxyID(account),
 					ProxyName:          opsUpstreamProxyName(account),
@@ -672,13 +680,26 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
 			respBody, _ := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
-			resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			// 调试日志：打印重试耗尽后的错误响应
-			logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			if billingRetryBypass {
+				logger.LegacyPrintf("service.gateway", "[Forward] Upstream billing error (immediate failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
+					account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			} else {
+				logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
+					account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			}
 
-			s.handleRetryExhaustedSideEffects(ctx, resp, account)
+			billingError := IsUpstreamBillingError(resp.StatusCode, respBody)
+			if billingError {
+				// A custom status-code policy may have caused a billing response to
+				// exhaust same-account retries. Apply the account billing transition
+				// once instead of the OAuth-403-only retry side effect.
+				s.handleFailoverSideEffects(ctx, resp, account, reqModel)
+			} else {
+				s.handleRetryExhaustedSideEffects(ctx, resp, account)
+			}
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
 				ProxyName:          opsUpstreamProxyName(account),
@@ -687,8 +708,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
 				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				Kind:               "retry_exhausted_failover",
-				Message:            extractUpstreamErrorMessage(respBody),
+				Kind: func() string {
+					if billingRetryBypass {
+						return "billing_failover"
+					}
+					return "retry_exhausted_failover"
+				}(),
+				Message: extractUpstreamErrorMessage(respBody),
 				Detail: func() string {
 					if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 						return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
@@ -696,11 +722,15 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					return ""
 				}(),
 			})
-			return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{
+			if billingError {
+				return nil, newUpstreamBillingFailoverError(resp.StatusCode, resp.Header, respBody, false)
+			}
+			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-			})
+			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
@@ -709,7 +739,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
 		respBody, _ := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
-		resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		// 调试日志：打印上游错误响应
 		logger.LegacyPrintf("service.gateway", "[Forward] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
@@ -732,13 +762,37 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				return ""
 			}(),
 		})
-		return nil, finalizeAccount429Failover(resp, &UpstreamFailoverError{
+		if IsUpstreamBillingError(resp.StatusCode, respBody) {
+			return nil, newUpstreamBillingFailoverError(resp.StatusCode, resp.Header, respBody, false)
+		}
+		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
+			ResponseHeaders:        resp.Header.Clone(),
 			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-		})
+		}
 	}
 	if resp.StatusCode >= 400 {
+		// Some providers report exhausted account credit as 400 with a
+		// structured insufficient_quota/balance code. Read it before the
+		// generic 400 handler so it can rotate the account and avoid exposing
+		// the provider's billing message.
+		if resp.StatusCode == http.StatusBadRequest {
+			respBody, readErr := s.readUpstreamErrorBody(resp)
+			// The classifier is a look-ahead. Always put the bytes back, including
+			// partial bytes returned with a read error, so the normal 400 handler
+			// can still emit/log the upstream response instead of seeing EOF.
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			if readErr == nil {
+				if IsUpstreamBillingError(resp.StatusCode, respBody) {
+					if s.rateLimitService != nil {
+						s.handleFailoverSideEffects(ctx, resp, account, reqModel)
+					}
+					return nil, newUpstreamBillingFailoverError(resp.StatusCode, resp.Header, respBody, false)
+				}
+			}
+		}
 		// 可选：对部分 400 触发 failover（默认关闭以保持语义）
 		if resp.StatusCode == 400 && s.cfg != nil && s.cfg.Gateway.FailoverOn400 {
 			respBody, readErr := s.readUpstreamErrorBody(resp)
@@ -747,7 +801,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				return s.handleErrorResponse(ctx, resp, c, account, reqModel)
 			}
 			_ = resp.Body.Close()
-			resp.Body = preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(respBody)))
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			if s.shouldFailoverOn400(respBody) {
 				upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
@@ -815,13 +869,23 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				// 上游 HTTP 200 + SSE 流体内出现 event:error 帧。
 				body := []byte(sseErr.RawData)
 				semanticStatus := http.StatusForbidden
-				if c.Writer.Size() == writerSizeBeforeStream && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
+				billingStatus := upstreamBillingStatusCode(http.StatusOK, body)
+				if billingStatus != 0 {
+					semanticStatus = billingStatus
+					syntheticResp := &http.Response{
+						StatusCode: semanticStatus,
+						Header:     resp.Header.Clone(),
+						Body:       io.NopCloser(bytes.NewReader(body)),
+					}
+					if s.rateLimitService != nil {
+						s.handleFailoverSideEffects(ctx, syntheticResp, account, reqModel)
+					}
+				} else if c.Writer.Size() == writerSizeBeforeStream && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
 					semanticStatus = 529
 					syntheticResp := &http.Response{
 						StatusCode: semanticStatus,
 						Header:     resp.Header.Clone(),
-						Body:       preserveAccount429RetryMarker(resp, io.NopCloser(bytes.NewReader(body))),
-						Request:    resp.Request,
+						Body:       io.NopCloser(bytes.NewReader(body)),
 					}
 					s.handleFailoverSideEffects(ctx, syntheticResp, account, reqModel)
 				}
@@ -857,6 +921,16 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					account.ID, account.Name, resp.Header.Get("x-request-id"),
 					truncateString(sseErr.RawData, 1000),
 				)
+				if billingStatus != 0 {
+					if c.Writer.Size() == writerSizeBeforeStream && !c.Writer.Written() {
+						// The stream reader prepared headers but emitted no bytes.
+						// Let the next attempt or final JSON error choose its type.
+						c.Writer.Header().Del("Content-Type")
+						return nil, newUpstreamBillingFailoverError(semanticStatus, resp.Header, body, false)
+					}
+					billingErr := errors.New("upstream stream error")
+					return partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, billingErr), billingErr
+				}
 
 				return nil, &UpstreamFailoverError{
 					StatusCode:   semanticStatus,

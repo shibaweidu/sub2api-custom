@@ -1,9 +1,9 @@
 <template>
-  <AppLayout>
+  <component :is="props.embedded ? 'div' : AppLayout">
     <div class="space-y-6">
-      <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
+      <UsageStatsCards v-if="!props.sharedOnly" :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
 
-      <div class="space-y-4">
+      <div v-if="!props.sharedOnly" class="space-y-4">
         <div class="card p-4">
           <div class="flex flex-wrap items-center gap-4">
             <div class="flex items-center gap-2">
@@ -115,7 +115,7 @@
               <label class="input-label">{{ t('usage.compactionFilter') }}</label>
               <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[200px]">
+            <div v-if="subscriptionFeatureEnabled" class="w-full sm:w-auto sm:min-w-[200px]">
               <label class="input-label">{{ t('admin.usage.billingType') }}</label>
               <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
             </div>
@@ -214,7 +214,7 @@
         @ipGeoBatchFailed="handleIpGeoBatchFailed"
       />
     </div>
-  </AppLayout>
+  </component>
 
 </template>
 
@@ -222,6 +222,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { FeatureFlags, resolveFeatureFlag } from '@/utils/featureFlags'
 import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -255,6 +256,7 @@ import type { Column } from '@/components/common/types'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 
 const { t } = useI18n()
+const props = withDefaults(defineProps<{ embedded?: boolean; sharedOnly?: boolean }>(), { embedded: false, sharedOnly: false })
 const appStore = useAppStore()
 
 type DistributionMetric = 'tokens' | 'actual_cost'
@@ -355,7 +357,7 @@ const groupDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
-const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
+const errorViewEnabled = computed(() => !props.sharedOnly && (appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false))
 
 const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
@@ -391,6 +393,8 @@ const compactionOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.allCompactionTypes') },
   { value: true, label: t('usage.compactionOnly') },
 ])
+// 订阅功能关闭后只剩余额计费，「计费类型」筛选（余额/订阅）失去意义，整块隐藏。
+const subscriptionFeatureEnabled = computed(() => resolveFeatureFlag(appStore.cachedPublicSettings, FeatureFlags.subscription))
 const billingTypeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingTypes') },
   { value: 0, label: t('admin.usage.billingTypeBalance') },
@@ -438,6 +442,7 @@ const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams 
   ...normalizedFilters.value,
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order,
+  ...(props.sharedOnly ? { shared_only: true } : {}),
 })
 
 const loadLogs = async () => {
@@ -540,6 +545,10 @@ const refreshModelOptions = (models: ModelStat[]) => {
 const applyFilters = () => {
   pagination.page = 1
   void loadLogs()
+  if (props.sharedOnly) {
+    resetErrorRows()
+    return
+  }
   void loadStats()
   void loadModelStats()
   void loadChartData()
@@ -548,6 +557,7 @@ const applyFilters = () => {
 
 const refreshData = () => {
   void loadLogs()
+  if (props.sharedOnly) return
   void loadStats()
   void loadModelStats()
   void loadChartData()
@@ -638,9 +648,10 @@ const exportToCSV = async () => {
   try {
     const allLogs: UsageLog[] = []
     const pageSize = 100
+    const exportParams = buildUsageListParams(1, pageSize)
     const totalPages = Math.ceil(pagination.total / pageSize)
     for (let page = 1; page <= totalPages; page++) {
-      const response = await usageAPI.query(buildUsageListParams(page, pageSize))
+      const response = await usageAPI.query({ ...exportParams, page })
       allLogs.push(...response.items)
     }
     if (allLogs.length === 0) {
@@ -693,7 +704,7 @@ const exportToCSV = async () => {
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `usage_${startDate.value}_to_${endDate.value}.csv`
+    link.download = `usage_${exportParams.start_date}_to_${exportParams.end_date}.csv`
     link.click()
     window.URL.revokeObjectURL(url)
     appStore.showSuccess(t('usage.exportSuccess'))

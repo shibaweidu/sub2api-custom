@@ -1184,6 +1184,7 @@
                           | 'all'
                           | 'priority'
                           | 'flex'
+                          | 'missing'
                       "
                       :options="openaiFastPolicyTierOptions"
                     />
@@ -4439,6 +4440,41 @@
 
         <!-- Tab: Gateway — Claude Code, Scheduling -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
+          <div class="card" data-testid="upstream-error-retry-settings">
+            <div class="flex items-center justify-between gap-6 border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                  {{ t('admin.settings.upstreamErrorRetry.title') }}
+                </h2>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.upstreamErrorRetry.description') }}
+                </p>
+              </div>
+              <Toggle v-model="form.upstream_error_retry.enabled" data-testid="upstream-error-retry-toggle" />
+            </div>
+            <div class="space-y-4 p-6">
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.upstreamErrorRetry.maxRetries') }}
+                  <input v-model.number="form.upstream_error_retry.max_retries" type="number" min="1" max="10" step="1"
+                    class="input mt-2" data-testid="upstream-error-retry-max" />
+                </label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.upstreamErrorRetry.delay') }}
+                  <input v-model.number="form.upstream_error_retry.delay_ms" type="number" min="100" max="10000" step="100"
+                    class="input mt-2" data-testid="upstream-error-retry-delay" />
+                </label>
+              </div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {{ t('admin.settings.upstreamErrorRetry.errors') }}
+                <textarea v-model="form.upstream_error_retry.errors" rows="5" maxlength="32768"
+                  class="input mt-2 font-mono text-sm" data-testid="upstream-error-retry-errors"
+                  :placeholder="'503\nserver_is_overloaded\nservers are currently overloaded'" />
+              </label>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamErrorRetry.matchHint') }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.upstreamErrorRetry.scopeHint') }}</p>
+            </div>
+          </div>
           <!-- Claude Code Settings -->
           <div class="card">
             <div
@@ -4501,6 +4537,50 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketEnabled") }}
+                    </h3>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayForwarding.codexTicketEnabledDesc") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    id="codex-ticket-enabled"
+                    v-model="form.openai_codex_ticket_enabled"
+                  />
+                </div>
+                <div>
+                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
+                  </p>
+                  <textarea
+                    id="codex-ticket-harvest-proxy"
+                    v-model="form.openai_codex_ticket_harvest_proxy_url"
+                    rows="5"
+                    class="input mt-3 w-full resize-y font-mono text-sm"
+                    :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    :spellcheck="false"
+                  />
+                  <p
+                    v-if="form.openai_codex_ticket_harvest_proxy_configured"
+                    class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
+                  </p>
+                  <CodexTicketProxyTest
+                    :proxy-pool="form.openai_codex_ticket_harvest_proxy_url"
+                    :saved-proxy-pool="savedCodexTicketProxyPool"
+                    :saved-proxy-count="savedCodexTicketProxyCount"
+                    :disabled="loading || saving || loadFailed"
+                  />
+                </div>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
@@ -6763,6 +6843,17 @@
                     />
                   </div>
 
+                  <label class="flex items-center gap-2 sm:col-span-2">
+                    <input
+                      v-model="item.hide_open_button"
+                      type="checkbox"
+                      data-testid="custom-menu-hide-open-button"
+                    />
+                    <span class="text-sm text-gray-700 dark:text-gray-300">
+                      {{ t("admin.settings.customMenu.hideOpenButton") }}
+                    </span>
+                  </label>
+
                   <!-- SVG Icon (full width) -->
                   <div class="sm:col-span-2">
                     <label
@@ -7230,6 +7321,36 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.siteBillingMode.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.siteBillingMode.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.siteBillingMode.label') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ siteBillingModeHint }}
+                </p>
+              </div>
+              <div class="w-full shrink-0 sm:w-56">
+                <Select
+                  :modelValue="siteBillingMode"
+                  :options="siteBillingModeOptions"
+                  @update:modelValue="siteBillingMode = $event as SiteBillingMode"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.pluginManagement.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -7331,6 +7452,12 @@
               </div>
               <Toggle v-model="form.affiliate_enabled" />
             </div>
+
+            <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
+              <div><label class="text-sm font-medium text-gray-700 dark:text-gray-300">共享账号池</label><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">允许用户上传账号并加入共享池</p></div>
+              <Toggle v-model="form.shared_pool_enabled" />
+            </div>
+            <div><label class="input-label">共享池平台抽成比例 (%)</label><input v-model.number="form.shared_pool_fee_rate_percent" type="number" min="0" max="100" step="0.01" class="input w-full" /></div>
 
             <div v-if="form.affiliate_enabled" class="space-y-6">
               <div class="flex items-center justify-between">
@@ -8814,7 +8941,14 @@ import type {
 import type { ProviderInstance } from "@/types/payment";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import Icon from "@/components/icons/Icon.vue";
-import Select from "@/components/common/Select.vue";
+import Select, { type SelectOption } from "@/components/common/Select.vue";
+import {
+  SITE_BILLING_MODES,
+  SITE_BILLING_MODE_I18N_KEYS,
+  billingModeToSettings,
+  resolveSiteBillingMode,
+  type SiteBillingMode,
+} from "@/utils/siteBillingMode";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PaymentProviderList from "@/components/payment/PaymentProviderList.vue";
 import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vue";
@@ -8826,6 +8960,7 @@ import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
+import CodexTicketProxyTest from "@/views/admin/settings/CodexTicketProxyTest.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
   useStepUp,
@@ -8953,6 +9088,8 @@ const { copyToClipboard } = useClipboard();
 const loading = ref(true);
 const loadFailed = ref(false);
 const saving = ref(false);
+const savedCodexTicketProxyPool = ref("");
+const savedCodexTicketProxyCount = ref(0);
 const testingSmtp = ref(false);
 const sendingTestEmail = ref(false);
 const smtpPasswordManuallyEdited = ref(false);
@@ -9615,6 +9752,7 @@ const form = reactive<SettingsForm>({
     url: string;
     visibility: "user" | "admin";
     sort_order: number;
+    hide_open_button?: boolean;
   }>,
   custom_endpoints: [] as Array<{
     name: string;
@@ -9773,6 +9911,7 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_previous_response: "",
   openai_advanced_scheduler_weight_session_sticky: "",
   // Gateway forwarding behavior
+  upstream_error_retry: { enabled: false, max_retries: 3, delay_ms: 1000, errors: "" },
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -9789,6 +9928,10 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  openai_codex_ticket_enabled: false,
+  openai_codex_ticket_harvest_proxy_url: "",
+  openai_codex_ticket_harvest_proxy_configured: false,
+  openai_codex_ticket_harvest_proxy_count: 0,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -9812,6 +9955,8 @@ const form = reactive<SettingsForm>({
   channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
+  // Subscription feature switch (user sidebar "My Subscriptions" entry)
+  subscription_enabled: true,
   // Model Plaza feature switches + description
   model_plaza_enabled: false,
   model_plaza_require_auth: false,
@@ -9820,6 +9965,8 @@ const form = reactive<SettingsForm>({
   plugin_management_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
+  shared_pool_enabled: false,
+  shared_pool_fee_rate_percent: 10,
   // Allow user view error requests
   allow_user_view_error_requests: false,
 });
@@ -10779,6 +10926,8 @@ async function loadSettings() {
   loadFailed.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
+    savedCodexTicketProxyPool.value = settings.openai_codex_ticket_harvest_proxy_url ?? "";
+    savedCodexTicketProxyCount.value = settings.openai_codex_ticket_harvest_proxy_count ?? 0;
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -11019,9 +11168,37 @@ function findDuplicateDefaultSubscription(
   });
 }
 
+// 站点类型：由 subscription_enabled 与 payment_balance_disabled 两个开关派生的单选，
+// 保存时同时写回两者，避免出现「既无充值也无订阅」的组合。
+const siteBillingModeOptions = computed<SelectOption[]>(() =>
+  SITE_BILLING_MODES.map((mode) => ({
+    value: mode,
+    label: t(`admin.settings.features.siteBillingMode.options.${SITE_BILLING_MODE_I18N_KEYS[mode]}`),
+  })),
+);
+const siteBillingMode = computed<SiteBillingMode>({
+  get: () => resolveSiteBillingMode(form),
+  set: (mode) => {
+    Object.assign(form, billingModeToSettings(mode));
+  },
+});
+const siteBillingModeHint = computed(() =>
+  t(`admin.settings.features.siteBillingMode.hints.${SITE_BILLING_MODE_I18N_KEYS[siteBillingMode.value]}`),
+);
+
 async function saveSettings() {
   saving.value = true;
   try {
+    const retry = form.upstream_error_retry;
+    const errorLines = retry.errors.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!Number.isInteger(retry.max_retries) || retry.max_retries < 1 || retry.max_retries > 10 ||
+        !Number.isInteger(retry.delay_ms) || retry.delay_ms < 100 || retry.delay_ms > 10000 ||
+        (retry.enabled && errorLines.length === 0) || errorLines.length > 100 ||
+        errorLines.some((line) => /^\d+$/.test(line) && (Number(line) < 400 || Number(line) > 599 || Number(line) === 429))) {
+      appStore.showError(t("admin.settings.upstreamErrorRetry.invalid"));
+      activeTab.value = "gateway";
+      return;
+    }
     const normalizedTableDefaultPageSize = Math.floor(
       Number(form.table_default_page_size),
     );
@@ -11351,6 +11528,7 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      upstream_error_retry: { ...form.upstream_error_retry },
       openai_ttft_mode:
         form.openai_ttft_mode === "visible" ? "visible" : "semantic",
       enable_fingerprint_unification: form.enable_fingerprint_unification,
@@ -11375,6 +11553,9 @@ async function saveSettings() {
         form.openai_codex_client_version?.trim() || "",
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
+      openai_codex_ticket_enabled: form.openai_codex_ticket_enabled,
+      openai_codex_ticket_harvest_proxy_url:
+        form.openai_codex_ticket_harvest_proxy_url.trim(),
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -11476,6 +11657,8 @@ async function saveSettings() {
       channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      // Subscription feature switch
+      subscription_enabled: form.subscription_enabled,
       // Model Plaza feature switches + description
       model_plaza_enabled: form.model_plaza_enabled,
       model_plaza_require_auth: form.model_plaza_require_auth,
@@ -11483,6 +11666,8 @@ async function saveSettings() {
       plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
+      shared_pool_enabled: form.shared_pool_enabled,
+      shared_pool_fee_rate_percent: Number(form.shared_pool_fee_rate_percent) || 0,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
     };
 
@@ -11527,6 +11712,8 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    savedCodexTicketProxyPool.value = updated.openai_codex_ticket_harvest_proxy_url ?? "";
+    savedCodexTicketProxyCount.value = updated.openai_codex_ticket_harvest_proxy_count ?? 0;
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
       if (value !== null && value !== undefined) {
@@ -12107,6 +12294,7 @@ const openaiFastPolicyTierOptions = computed(() => [
     label: t("admin.settings.openaiFastPolicy.tierUltrafast"),
   },
   { value: "flex", label: t("admin.settings.openaiFastPolicy.tierFlex") },
+  { value: "missing", label: t("admin.settings.openaiFastPolicy.tierMissing") },
 ]);
 
 const openaiFastPolicyActionOptions = computed(() => [
