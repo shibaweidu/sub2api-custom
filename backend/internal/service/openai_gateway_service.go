@@ -75,6 +75,7 @@ var openaiAllowedHeaders = map[string]bool{
 	"accept-language":          true,
 	"content-type":             true,
 	"conversation_id":          true,
+	"openai-beta":              true,
 	"user-agent":               true,
 	"originator":               true,
 	"session_id":               true,
@@ -513,6 +514,8 @@ type OpenAIGatewayService struct {
 	openaiCodexTurnStateWrites  atomic.Uint64
 	// openaiCodexTickets: accountID\x00model → *openAICodexTicket，账号套餐对应长度的门票。
 	openaiCodexTickets           sync.Map
+	openaiCodexTicketCookies     sync.Map
+	openaiCodexTicketCookiesMu   sync.Map
 	openaiCodexTicketScheduler   codexTicketScheduler
 	openaiCodexTicketLifecycleMu sync.Mutex
 	openaiCodexTicketCancel      context.CancelFunc

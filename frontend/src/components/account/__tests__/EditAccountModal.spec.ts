@@ -2,10 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
-const { updateAccountMock, updateAdminSharedAccountMock, checkMixedChannelRiskMock, authIsSimpleMode, getSettingsMock } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode, getSettingsMock } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   getSettingsMock: vi.fn().mockResolvedValue({ openai_codex_ticket_enabled: true }),
-  updateAdminSharedAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -46,10 +45,6 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn()
 }))
 
-vi.mock('@/api/admin/sharedPool', () => ({
-  updateSharedAccount: updateAdminSharedAccountMock
-}))
-
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -76,6 +71,7 @@ const BaseDialogStub = defineComponent({
 const ModelWhitelistSelectorStub = defineComponent({
   name: 'ModelWhitelistSelector',
   props: {
+    modelMappings: { type: Array, default: () => [] },
     modelValue: {
       type: Array,
       default: () => []
@@ -355,6 +351,60 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('preserves quality protection when saving unrelated account settings', async () => {
+    const account = { ...buildAccount(), status: 'quality_paused', schedulable: false }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="account-status"]').element.value).toBe('quality_paused')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('status')
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('schedulable')
+    wrapper.unmount()
+  })
+
+  it.each(['active', 'inactive'])('allows manually changing quality-paused account status to %s', async (status) => {
+    const account = { ...buildAccount(), status: 'quality_paused', schedulable: false }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="account-status"]').setValue(status)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.status).toBe(status)
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('schedulable')
+    wrapper.unmount()
+  })
+
+  it('does not resend an unchanged active status when saving an older account snapshot', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue({ ...account, status: 'quality_paused' })
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]).not.toHaveProperty('status')
+    wrapper.unmount()
+  })
+
+  it('passes existing non-identity mappings to the whitelist selector and preserves them on save', async () => {
+    const account = buildAccount()
+    account.credentials.model_mapping = { 'gpt-5.2': 'gpt-5.2', 'gpt-latest': 'deepseek-chat' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'deepseek-chat' }
+    ])
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual(account.credentials.model_mapping)
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true, account: { ...account } })
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('modelMappings')).toEqual([
+      { from: 'gpt-latest', to: 'deepseek-chat' }
+    ])
+  })
+
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2028-02-29T12:34:00'))
@@ -468,71 +518,6 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
       'gpt-5.2': 'gpt-5.2'
     })
-  })
-
-  it('passes the admin shared proxy input to the listing endpoint', async () => {
-    const account = buildAccount()
-    updateAdminSharedAccountMock.mockReset().mockResolvedValue(account)
-    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
-
-    const wrapper = mount(EditAccountModal, {
-      props: {
-        show: true,
-        account,
-        sharedPool: true,
-        sharedPoolAdmin: true,
-        sharedListingId: 77,
-        proxies: [],
-        groups: []
-      },
-      global: {
-        stubs: {
-          BaseDialog: BaseDialogStub,
-          Select: SelectStub,
-          Icon: true,
-          ProxySelector: true,
-          ModelWhitelistSelector: ModelWhitelistSelectorStub
-        }
-      }
-    })
-
-    await wrapper.get('#shared-account-proxy').setValue(' socks5://user:pass@proxy.example.com:1080 ')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-
-    expect(updateAdminSharedAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAdminSharedAccountMock.mock.calls[0]?.[0]).toBe(77)
-    expect(updateAdminSharedAccountMock.mock.calls[0]?.[1]?.proxy_url).toBe('socks5://user:pass@proxy.example.com:1080')
-    wrapper.unmount()
-  })
-
-  it('clears the transient shared proxy input when switching accounts', async () => {
-    const first = buildAccount()
-    const second = { ...buildAccount(), id: 2, name: 'Second account' }
-    const wrapper = mount(EditAccountModal, {
-      props: {
-        show: true,
-        account: first,
-        sharedPool: true,
-        sharedPoolAdmin: true,
-        sharedListingId: 77,
-        proxies: [],
-        groups: []
-      },
-      global: {
-        stubs: {
-          BaseDialog: BaseDialogStub,
-          Select: SelectStub,
-          Icon: true,
-          ProxySelector: true,
-          ModelWhitelistSelector: ModelWhitelistSelectorStub
-        }
-      }
-    })
-
-    await wrapper.get('#shared-account-proxy').setValue('http://proxy.example.com:8080')
-    await wrapper.setProps({ account: second })
-    expect(wrapper.get<HTMLInputElement>('#shared-account-proxy').element.value).toBe('')
-    wrapper.unmount()
   })
 
   it('preserves OpenCode Zen account type and endpoints on submit', async () => {
@@ -1221,6 +1206,52 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
       'upstream_billing_probe_enabled'
     )
+  })
+
+  it('setting an upstream rate limit enables and locks probing without enabling billing rate sync', async () => {
+    const account = buildAccount()
+    account.extra = { quota_limit: 100 }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-billing-rate-limit"]').setValue('0.75')
+    const probe = wrapper.get<HTMLButtonElement>('[data-testid="upstream-billing-auto-probe"]')
+    expect(probe.attributes('aria-checked')).toBe('true')
+    expect(probe.element.disabled).toBe(true)
+    await probe.trigger('click')
+    expect(probe.attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="upstream-billing-rate-sync"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    const payload = updateAccountMock.mock.calls[0]?.[1]
+    expect(payload?.extra).toMatchObject({ upstream_billing_rate_limit: 0.75, quota_limit: 100 })
+    expect(payload?.upstream_billing_probe_enabled).toBe(true)
+    expect(payload?.upstream_billing_rate_sync_enabled).toBe(false)
+    expect(payload?.rate_multiplier).toBe(1)
+  })
+
+  it('loads a zero limit, then explicitly clears it and allows probing to be disabled', async () => {
+    const account = buildAccount()
+    account.extra = { upstream_billing_rate_limit: 0, upstream_billing_probe_enabled: false }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const input = wrapper.get<HTMLInputElement>('[data-testid="upstream-billing-rate-limit"]')
+    const probe = wrapper.get<HTMLButtonElement>('[data-testid="upstream-billing-auto-probe"]')
+    expect(input.element.value).toBe('0')
+    expect(probe.element.disabled).toBe(true)
+    expect(probe.attributes('aria-checked')).toBe('true')
+    await input.setValue('')
+    expect(probe.element.disabled).toBe(false)
+    await probe.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.upstream_billing_rate_limit).toBeNull()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_probe_enabled).toBe(false)
+  })
+
+  it('rejects a negative upstream rate limit', async () => {
+    updateAccountMock.mockReset()
+    const wrapper = mountModal(buildAccount())
+    await wrapper.get('[data-testid="upstream-billing-rate-limit"]').setValue('-0.1')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).not.toHaveBeenCalled()
   })
 
   it('exposes the upstream billing auto-probe toggle for non-OpenAI API-key accounts', async () => {

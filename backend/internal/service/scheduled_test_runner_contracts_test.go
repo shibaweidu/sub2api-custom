@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -43,10 +45,12 @@ func (r *runnerPlanRepoStub) UpdateAfterRun(ctx context.Context, _ int64, _, _ t
 }
 
 type runnerResultRepoStub struct {
+	mu              sync.Mutex
 	created         []*ScheduledTestResult
 	createdStatuses []string
 	createdEfforts  []string
 	updatedIDs      []int64
+	onCreate        func()
 }
 
 func (r *runnerResultRepoStub) GetByID(context.Context, int64) (*ScheduledTestResult, error) {
@@ -58,6 +62,8 @@ func (r *runnerResultRepoStub) RestartFailed(context.Context, *ScheduledTestResu
 }
 
 func (r *runnerResultRepoStub) Create(ctx context.Context, result *ScheduledTestResult) (*ScheduledTestResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -68,9 +74,14 @@ func (r *runnerResultRepoStub) Create(ctx context.Context, result *ScheduledTest
 	r.created = append(r.created, &copy)
 	r.createdStatuses = append(r.createdStatuses, copy.Status)
 	r.createdEfforts = append(r.createdEfforts, copy.ReasoningEffort)
+	if r.onCreate != nil {
+		r.onCreate()
+	}
 	return &copy, nil
 }
 func (r *runnerResultRepoStub) Update(ctx context.Context, result *ScheduledTestResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -87,6 +98,9 @@ func (r *runnerResultRepoStub) ListByPlanID(context.Context, int64, int) ([]*Sch
 	return nil, nil
 }
 func (r *runnerResultRepoStub) ListVisible(context.Context, int64, int) ([]*ScheduledTestResult, error) {
+	return nil, nil
+}
+func (r *runnerResultRepoStub) ListVisibleHistory(context.Context, int64, int64, int64, int) ([]*ScheduledTestResult, error) {
 	return nil, nil
 }
 func (r *runnerResultRepoStub) Delete(context.Context, int64) error { return nil }
@@ -265,7 +279,10 @@ func TestScheduledTestRunnerPersistsFailureAndAdvancesAfterCancellation(t *testi
 	accountID := int64(17)
 	plan := &ScheduledTestPlan{ID: 9, AccountID: &accountID, ModelID: "model", ReasoningEffort: "high", CronExpression: "*/5 * * * *", MaxResults: 3}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
+	// Cancellation after the visible row is created must still persist a
+	// failure; cancellation before dispatch must not create unused rows.
+	resultRepo.onCreate = cancel
 
 	runner.runOnePlan(ctx, plan)
 	if planRepo.updated != 1 {
@@ -294,10 +311,11 @@ func TestScheduledTestRunnerSavesOneResultPerGroupAccount(t *testing.T) {
 	scheduled := NewScheduledTestService(planRepo, resultRepo)
 	groupID := int64(8)
 	runner := &ScheduledTestRunnerService{
-		planRepo:       planRepo,
-		scheduledSvc:   scheduled,
-		accountRepo:    scheduledTestAccountRepoStub{accounts: []Account{{ID: 21}, {ID: 22}}},
-		accountTestSvc: nil, // each account records an independent failure result
+		planRepo:                planRepo,
+		scheduledSvc:            scheduled,
+		accountRepo:             scheduledTestAccountRepoStub{accounts: []Account{{ID: 21}, {ID: 22}}},
+		accountTestSvc:          nil, // each account records an independent failure result
+		automaticRetryBaseDelay: time.Millisecond,
 	}
 	plan := &ScheduledTestPlan{ID: 10, GroupID: &groupID, ModelID: "model", ReasoningEffort: "ultra", CronExpression: "*/5 * * * *", MaxResults: 5}
 	runner.runOnePlan(context.Background(), plan)
@@ -344,5 +362,24 @@ func TestScheduledTestRunnerPlanFailureSnapshotsReasoningEffort(t *testing.T) {
 	}
 	if got := resultRepo.created[0]; got.ReasoningEffort != "xhigh" || got.Status != "failed" {
 		t.Fatalf("plan failure result = %#v, want failed result with xhigh effort", got)
+	}
+}
+
+func TestExtractScheduledTestHTMLPreservesReportedPelicanTranscript(t *testing.T) {
+	raw, err := os.ReadFile("testdata/scheduled_test_pelican_transcript.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "<!doctype html>")
+	end := strings.LastIndex(source, "</html>") + len("</html>")
+	got := extractScheduledTestHTML(source)
+	if got != source[start:end] {
+		t.Fatalf("extracted %d bytes, want complete %d-byte document", len(got), end-start)
+	}
+	result := &ScheduledTestResult{Status: "success", OutputKind: "html", ResponseText: source, OutputHTML: "<html><body>old truncated preview</body></html>"}
+	normalizeStoredTestResults([]*ScheduledTestResult{result})
+	if result.OutputHTML != got {
+		t.Fatal("historical preview did not re-extract full original response")
 	}
 }

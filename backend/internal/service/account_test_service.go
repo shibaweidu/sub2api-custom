@@ -220,10 +220,17 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	if err != nil {
 		return nil, err
 	}
+	// The shared discovery response is the raw upstream catalog. Project it
+	// through the account mapping before exposing it in the admin picker so
+	// configured aliases remain public names and unconfigured models stay out.
+	projectedBody, err := projectAccountModelsBody(response.Body, account, nil, false)
+	if err != nil {
+		return nil, fmt.Errorf("project OpenAI account models: %w", err)
+	}
 	var payload struct {
 		Data []openai.Model `json:"data"`
 	}
-	if err := json.Unmarshal(response.Body, &payload); err != nil {
+	if err := json.Unmarshal(projectedBody, &payload); err != nil {
 		return nil, fmt.Errorf("decode OpenAI account models: %w", err)
 	}
 	// Every entry in the picker is labelled by the same rule: the upstream display
@@ -243,20 +250,40 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	// Add locally supported image choices only to the OAuth test picker; keep the
 	// shared upstream catalog and API-key discovery authoritative.
 	if account != nil && account.IsOpenAIOAuthLike() {
+		passthrough := account.IsOpenAIPassthroughEnabled()
 		seen := make(map[string]bool, len(payload.Data))
 		for _, model := range payload.Data {
 			seen[model.ID] = true
 		}
 		for _, model := range openai.DefaultModels {
 			if IsGPTImageGenerationModel(model.ID) && account.IsModelSupported(model.ID) && !seen[model.ID] {
+				if !passthrough && !IsGPTImageGenerationModel(account.GetMappedModel(model.ID)) {
+					continue
+				}
 				payload.Data = append(payload.Data, model)
 				seen[model.ID] = true
 			}
 		}
-		for model := range account.GetModelMapping() {
-			if IsGPTImageGenerationModel(model) && !strings.Contains(model, "*") && !seen[model] {
-				payload.Data = append(payload.Data, openai.Model{ID: model, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(model)})
+		// Image models that a configured alias points at are absent from the Codex
+		// manifest, so the projection alone cannot surface them. Resolve each public
+		// name to its target and keep the entry when that target is an image model.
+		// Judging by the target rather than the public name keeps a lookalike name
+		// (for example an alias spelled "gpt-image-*" that maps to a text model)
+		// from being synthesized into the picker.
+		// Passthrough keeps native image names without applying mapping targets.
+		for publicID := range account.GetModelMapping() {
+			if strings.Contains(publicID, "*") || seen[publicID] {
+				continue
 			}
+			target := publicID
+			if !passthrough {
+				target = account.GetMappedModel(publicID)
+			}
+			if !IsGPTImageGenerationModel(target) {
+				continue
+			}
+			payload.Data = append(payload.Data, openai.Model{ID: publicID, Object: "model", Type: "model", OwnedBy: "openai", DisplayName: openaiCodexDisplayName(publicID)})
+			seen[publicID] = true
 		}
 	}
 	return payload.Data, nil
@@ -304,7 +331,7 @@ func (s *AccountTestService) validateUpstreamBaseURL(raw string) (string, error)
 }
 
 // generateSessionString generates a Claude Code style session string.
-// The output format is determined by the UA version in claude.DefaultHeaders,
+// The output format is determined by the UA version in claude.DefaultHeaders(),
 // ensuring consistency between the user_id format and the UA sent to upstream.
 func generateSessionString() (string, error) {
 	b := make([]byte, 32)
@@ -313,7 +340,7 @@ func generateSessionString() (string, error) {
 	}
 	hex64 := hex.EncodeToString(b)
 	sessionUUID := uuid.New().String()
-	uaVersion := ExtractCLIVersion(claude.DefaultHeaders["User-Agent"])
+	uaVersion := ExtractCLIVersion(claude.DefaultHeaders()["User-Agent"])
 	return FormatMetadataUserID(hex64, "", sessionUUID, uaVersion), nil
 }
 
@@ -563,6 +590,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	beginAccountTestModelAttempt(c, testModelID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -574,7 +602,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	// Apply Claude Code client headers
-	for key, value := range claude.DefaultHeaders {
+	for key, value := range claude.DefaultHeaders() {
 		req.Header.Set(key, value)
 	}
 
@@ -661,6 +689,7 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	}
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	beginAccountTestModelAttempt(c, testModelID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(vertexBody))
 	if err != nil {
@@ -904,6 +933,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
+	beginAccountTestModelAttempt(c, upstreamTestModelID)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -988,6 +1018,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 						}
 					}
 					retryReq.Host = req.Host
+					beginAccountTestModelAttempt(c, upstreamTestModelID)
 					resp, err = s.doOpenAIAccountTestUpstream(retryReq, proxyURL, account, true)
 					if err != nil {
 						return s.sendErrorAndEnd(c, fmt.Sprintf("Request failed: %s", err.Error()))
@@ -1307,6 +1338,7 @@ func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx con
 	if !agentIdentityTaskRecoveryWasTried(ctx) {
 		s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	}
+	beginAccountTestModelAttempt(c, testModelID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -2184,6 +2216,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
 	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /v1/chat/completions 测试连接"})
+	beginAccountTestModelAttempt(c, testModelID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payloadBytes))
 	if err != nil {
@@ -2193,6 +2226,9 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+authToken)
+
+	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA，与真实转发路径一致。
+	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
 	account.ApplyHeaderOverrides(req.Header)
@@ -2482,6 +2518,7 @@ func (s *AccountTestService) testGeminiAccountConnection(c *gin.Context, account
 
 	// Send test_start event
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	beginAccountTestModelAttempt(c, testModelID)
 
 	// Get proxy and execute request
 	proxyURL := ""
@@ -2772,6 +2809,7 @@ func (s *AccountTestService) processGeminiStream(c *gin.Context, body io.Reader)
 		// Support two Gemini response formats:
 		// - AI Studio: {"candidates": [...]}
 		// - Gemini CLI: {"response": {"candidates": [...]}}
+		captureAccountTestReturnedModels(c, data)
 		if resp, ok := data["response"].(map[string]any); ok && resp != nil {
 			data = resp
 		}
@@ -2923,6 +2961,12 @@ func isAccountTestTruncationFinishReason(reason string) bool {
 // stop_reason, and rejects max_tokens so a non-SSE truncated document cannot
 // be mistaken for a successful test.
 func (s *AccountTestService) processClaudeJSONResponse(c *gin.Context, body []byte) error {
+	if accountTestIdentity(c) != nil {
+		var metadata map[string]any
+		if json.Unmarshal(body, &metadata) == nil {
+			captureAccountTestReturnedModels(c, metadata)
+		}
+	}
 	var response struct {
 		Type       string `json:"type"`
 		StopReason string `json:"stop_reason"`
@@ -2981,6 +3025,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 				var data map[string]any
 				if err := json.Unmarshal([]byte(jsonStr), &data); err == nil {
+					captureAccountTestReturnedModels(c, data)
 					eventType, _ := data["type"].(string)
 					switch eventType {
 					case "content_block_delta":
@@ -3064,6 +3109,13 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 		line, readErr := reader.ReadString('\n')
 
 		line = strings.TrimSpace(line)
+		if !seenJSON && strings.HasPrefix(line, "{") {
+			rest, err := io.ReadAll(reader)
+			if err != nil || (readErr != nil && readErr != io.EOF) {
+				return s.sendErrorAndEnd(c, "Chat Completions JSON response read failed")
+			}
+			return s.processOpenAIJSONTestResponse(c, append([]byte(line+"\n"), rest...), true)
+		}
 		if line != "" && sseDataPrefix.MatchString(line) {
 			jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 			if jsonStr == "[DONE]" {
@@ -3082,6 +3134,7 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 			if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 				return s.sendErrorAndEnd(c, "Invalid Chat Completions response from /v1/chat/completions: expected JSON data")
 			}
+			captureAccountTestReturnedModels(c, data)
 			seenJSON = true
 
 			if errData, ok := data["error"].(map[string]any); ok {
@@ -3141,10 +3194,11 @@ func (s *AccountTestService) processOpenAIChatCompletionsStream(c *gin.Context, 
 func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader) error {
 	reader := bufio.NewReader(body)
 	seenCompleted := false
+	seenData := false
 
 	for {
 		line, err := reader.ReadString('\n')
-		if err != nil {
+		if err != nil && (err != io.EOF || len(line) == 0) {
 			if err == io.EOF {
 				if seenCompleted {
 					s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
@@ -3156,9 +3210,17 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		}
 
 		line = strings.TrimSpace(line)
+		if !seenData && strings.HasPrefix(line, "{") {
+			rest, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				return s.sendErrorAndEnd(c, "OpenAI JSON response read failed")
+			}
+			return s.processOpenAIJSONTestResponse(c, append([]byte(line+"\n"), rest...), false)
+		}
 		if line == "" || !sseDataPrefix.MatchString(line) {
 			continue
 		}
+		seenData = true
 
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
@@ -3173,6 +3235,7 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 			continue
 		}
+		captureAccountTestReturnedModels(c, data)
 
 		eventType, _ := data["type"].(string)
 
@@ -3469,6 +3532,9 @@ func (s *AccountTestService) testOpenAIImageOAuth(c *gin.Context, ctx context.Co
 }
 
 func (s *AccountTestService) sendEvent(c *gin.Context, event TestEvent) {
+	if event.Type == "test_start" {
+		captureAccountTestUpstreamModel(c, event.Model)
+	}
 	if event.Type == "test_complete" {
 		if suppress, ok := c.Get(accountTestSuppressCompletionContextKey); ok {
 			if suppressCompletion, _ := suppress.(bool); suppressCompletion {
@@ -3507,6 +3573,7 @@ func (s *AccountTestService) RunTestBackgroundWithPrompt(ctx context.Context, ac
 // that forwards an explicitly selected Codex-style reasoning effort.
 func (s *AccountTestService) RunTestBackgroundWithPromptAndReasoning(ctx context.Context, accountID int64, modelID, prompt, reasoningEffort string) (*ScheduledTestResult, error) {
 	startedAt := time.Now()
+	ctx, modelIdentity := newAccountTestModelIdentity(ctx)
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
@@ -3526,13 +3593,17 @@ func (s *AccountTestService) RunTestBackgroundWithPromptAndReasoning(ctx context
 		}
 	}
 
+	upstreamModel, returnedModels, invalidModelEvidence := modelIdentity.snapshot()
 	return &ScheduledTestResult{
-		Status:       status,
-		ResponseText: responseText,
-		ErrorMessage: errMsg,
-		LatencyMs:    finishedAt.Sub(startedAt).Milliseconds(),
-		StartedAt:    startedAt,
-		FinishedAt:   finishedAt,
+		UpstreamModel:        upstreamModel,
+		ReturnedModels:       returnedModels,
+		ModelEvidenceInvalid: invalidModelEvidence,
+		Status:               status,
+		ResponseText:         responseText,
+		ErrorMessage:         errMsg,
+		LatencyMs:            finishedAt.Sub(startedAt).Milliseconds(),
+		StartedAt:            startedAt,
+		FinishedAt:           finishedAt,
 	}, nil
 }
 

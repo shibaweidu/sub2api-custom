@@ -21,13 +21,11 @@ import (
 )
 
 type Account struct {
-	ID       int64
-	Name     string
-	Notes    *string
-	Platform string
-	Type     string
-	// AccountScope isolates user-provided shared accounts from system scheduling.
-	AccountScope            string
+	ID                      int64
+	Name                    string
+	Notes                   *string
+	Platform                string
+	Type                    string
 	Credentials             map[string]any
 	Extra                   map[string]any
 	ProxyID                 *int64
@@ -47,12 +45,15 @@ type Account struct {
 	RateMultiplier     *float64
 	LoadFactor         *int // 调度负载因子；nil 表示使用 Concurrency
 	Status             string
+	StatusChanged      bool `json:"-"` // explicit admin status edit; ordinary writes preserve quality protection
 	ErrorMessage       string
 	LastUsedAt         *time.Time
 	ExpiresAt          *time.Time
 	AutoPauseOnExpired bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+
+	UpstreamBillingRateLimitChanged bool `json:"-"` // explicit admin edit, including clearing the ceiling
 
 	Schedulable bool
 
@@ -205,6 +206,9 @@ func (a *Account) IsSchedulable() bool {
 		return false
 	}
 	if a.IsAPIKeyOrBedrock() && a.IsQuotaExceeded() {
+		return false
+	}
+	if a.IsUpstreamBillingRateLimitedAt(now) {
 		return false
 	}
 	return true
@@ -2029,6 +2033,8 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return false
 	}
 	switch capability {
+	case OpenAIImagesCapabilityAPIKey:
+		return a.Type == AccountTypeAPIKey
 	case OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
 		return a.Type == AccountTypeOAuth || a.Type == AccountTypeSetupToken || a.Type == AccountTypeAPIKey
 	default:

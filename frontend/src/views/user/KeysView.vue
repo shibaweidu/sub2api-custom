@@ -776,6 +776,7 @@
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
             data-tour="key-form-group"
+            @open-change="formGroupSelectorOpen = $event"
           >
             <template #selected="{ option }">
               <GroupBadge
@@ -823,7 +824,16 @@
                 "
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
-              />
+              >
+                <template v-if="groupChannelStatusEnabled" #status>
+                  <GroupChannelStatus
+                    :rows="groupChannelRows((option as unknown as GroupOption).value, (option as unknown as GroupOption).platform)"
+                    :coverage="groupChannelCoverage"
+                    :loading="groupChannelLoading"
+                    :unavailable="groupChannelUnavailable"
+                  />
+                </template>
+              </GroupOptionItem>
             </template>
           </Select>
         </div>
@@ -837,6 +847,7 @@
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
             data-test="fallback-group-select"
+            @open-change="fallbackGroupSelectorOpen = $event"
           >
             <template #selected="{ option }">
               <GroupBadge
@@ -887,7 +898,16 @@
                 "
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
-              />
+              >
+                <template v-if="groupChannelStatusEnabled" #status>
+                  <GroupChannelStatus
+                    :rows="groupChannelRows((option as unknown as GroupOption).value, (option as unknown as GroupOption).platform)"
+                    :coverage="groupChannelCoverage"
+                    :loading="groupChannelLoading"
+                    :unavailable="groupChannelUnavailable"
+                  />
+                </template>
+              </GroupOptionItem>
               <div
                 v-else
                 class="flex w-full items-center justify-between gap-3"
@@ -1539,9 +1559,8 @@
       :api-key="selectedKey?.key || ''"
       :base-url="publicSettings?.api_base_url || ''"
       :platform="selectedKey?.group?.platform || null"
-      :allow-messages-dispatch="
-        selectedKey?.group?.allow_messages_dispatch || false
-      "
+      :claude-code-only="selectedKey?.group?.claude_code_only || false"
+      :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
       @close="closeUseKeyModal"
     />
 
@@ -1605,7 +1624,8 @@
       <div
         v-if="groupSelectorKeyId !== null && dropdownPosition"
         ref="dropdownRef"
-        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-max max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 sm:min-w-[380px] dark:bg-dark-800 dark:ring-white/10"
+        data-test="key-group-dropdown"
+        class="animate-in fade-in slide-in-from-top-2 fixed z-[100000020] w-[480px] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-black/5 duration-200 dark:bg-dark-800 dark:ring-white/10"
         style="pointer-events: auto !important"
         :style="{
           top:
@@ -1693,7 +1713,16 @@
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
               :selected="selectedGroupIdForSelector === option.value"
-            />
+            >
+              <template v-if="groupChannelStatusEnabled" #status>
+                <GroupChannelStatus
+                  :rows="groupChannelRows(option.value, option.platform)"
+                  :coverage="groupChannelCoverage"
+                  :loading="groupChannelLoading"
+                  :unavailable="groupChannelUnavailable"
+                />
+              </template>
+            </GroupOptionItem>
           </button>
           <!-- Empty state when search has no results -->
           <div
@@ -1720,8 +1749,10 @@ import {
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAppStore } from "@/stores/app";
+import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { useClipboard } from "@/composables/useClipboard";
+import { useGroupChannelStatus } from "@/composables/useGroupChannelStatus";
 import { getPersistedPageSize } from "@/composables/usePersistedPageSize";
 
 const { t } = useI18n();
@@ -1741,6 +1772,7 @@ import UseKeyModal from "@/components/keys/UseKeyModal.vue";
 import EndpointPopover from "@/components/keys/EndpointPopover.vue";
 import GroupBadge from "@/components/common/GroupBadge.vue";
 import GroupOptionItem from "@/components/common/GroupOptionItem.vue";
+import GroupChannelStatus from "@/components/keys/GroupChannelStatus.vue";
 import type {
   ApiKey,
   Group,
@@ -1762,6 +1794,7 @@ import {
   type KeyGroupProvider,
 } from "@/utils/keyGroupProviders";
 import {
+  CC_SWITCH_USAGE_SCRIPT,
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType,
 } from "@/utils/ccswitchImport";
@@ -1971,6 +2004,30 @@ const copiedKeyId = ref<number | null>(null);
 const groupSelectorKeyId = ref<number | null>(null);
 const groupSelectorTarget = ref<GroupSelectorTarget>("primary");
 const publicSettings = ref<PublicSettings | null>(null);
+const formGroupSelectorOpen = ref(false);
+const fallbackGroupSelectorOpen = ref(false);
+const authStore = useAuthStore();
+const groupChannelStatusEnabled = computed(() => {
+  const settings = publicSettings.value ?? appStore.cachedPublicSettings;
+  return settings?.channel_monitor_enabled !== false && settings?.channel_monitor_mode === "v2";
+});
+const {
+  coverage: groupChannelCoverage,
+  loading: groupChannelLoading,
+  unavailable: groupChannelUnavailable,
+  rowsForGroup: groupChannelRows,
+} = useGroupChannelStatus({
+  enabled: groupChannelStatusEnabled,
+  active: computed(() => groupSelectorKeyId.value !== null ||
+    ((showCreateModal.value || showEditModal.value) &&
+      (formGroupSelectorOpen.value || fallbackGroupSelectorOpen.value))),
+  userId: computed(() => authStore.user?.id ?? null),
+  groupIds: computed(() => groups.value.map(group => group.id)),
+});
+watch([showCreateModal, showEditModal], () => {
+  formGroupSelectorOpen.value = false;
+  fallbackGroupSelectorOpen.value = false;
+});
 const dropdownRef = ref<HTMLElement | null>(null);
 const columnDropdownRef = ref<HTMLElement | null>(null);
 const dropdownPosition = ref<{
@@ -2067,7 +2124,6 @@ const groupFilterOptions = computed(() => [
   { value: "", label: t("keys.allGroups") },
   { value: 0, label: t("keys.noGroup") },
   ...groups.value
-    .filter((g) => g.is_shared_pool !== true)
     .map((g) => ({ value: g.id, label: g.name })),
 ]);
 
@@ -2098,7 +2154,6 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
 // Convert groups to Select options format with rate multiplier and subscription type
 const groupOptions = computed(() =>
   groups.value
-    .filter((group) => group.is_shared_pool !== true)
     .map((group) => ({
       value: group.id,
       label: group.name,
@@ -2129,6 +2184,7 @@ const fallbackGroupOptions = computed(() => {
 });
 
 const createProvider = ref<KeyGroupProvider>("anthropic");
+watch(createProvider, () => { formGroupSelectorOpen.value = false; });
 const createProviderOptions = computed(() =>
   KEY_GROUP_PROVIDERS.map((value) => ({
     value,
@@ -2412,7 +2468,7 @@ const openGroupSelector = (key: ApiKey, target: GroupSelectorTarget) => {
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect();
       const dropdownEstHeight = 400; // estimated max dropdown height
-      const dropdownEstWidth = Math.min(380, window.innerWidth - 16);
+      const dropdownEstWidth = Math.min(480, window.innerWidth - 16);
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
       // 夹取 left，避免窄屏下浮层超出视口右缘
@@ -2795,24 +2851,8 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   const baseUrl = publicSettings.value?.api_base_url || window.location.origin;
   const platform = row.group?.platform || "anthropic";
 
-  const usageScript = `({
-    request: {
-      url: "{{baseUrl}}/v1/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })`;
-  const providerName =
-    (publicSettings.value?.site_name || "sub2api").trim() || "sub2api";
+  const usageScript = CC_SWITCH_USAGE_SCRIPT
+  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
   const deeplink = buildCcSwitchImportDeeplink({
     baseUrl,
     platform,

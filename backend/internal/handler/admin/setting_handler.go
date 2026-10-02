@@ -62,7 +62,6 @@ type SettingHandler struct {
 	notificationEmailService *service.NotificationEmailService
 	totpService              *service.TotpService
 	userService              *service.UserService
-	codexTicketProxyTester   *service.OpenAICodexTicketProxyTester
 }
 
 // NewSettingHandler 创建系统设置处理器
@@ -266,6 +265,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		DefaultBalance:                                         settings.DefaultBalance,
 		RiskControlEnabled:                                     settings.RiskControlEnabled,
 		CyberSessionBlockEnabled:                               settings.CyberSessionBlockEnabled,
+		CyberPolicyUserAllowlist:                               settings.CyberPolicyUserAllowlist,
 		CyberSessionBlockTTLSeconds:                            settings.CyberSessionBlockTTLSeconds,
 		AffiliateRebateRate:                                    settings.AffiliateRebateRate,
 		AffiliateRebateFreezeHours:                             settings.AffiliateRebateFreezeHours,
@@ -306,9 +306,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAICodexClientVersionSynced:                         settings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      settings.OpenAICodexVersionAutoSyncEnabled,
 		OpenAICodexTicketEnabled:                               settings.OpenAICodexTicketEnabled,
-		OpenAICodexTicketHarvestProxyURL:                       service.MaskOpenAICodexTicketHarvestProxyPool(settings.OpenAICodexTicketHarvestProxyURL),
-		OpenAICodexTicketHarvestProxyConfigured:                strings.TrimSpace(settings.OpenAICodexTicketHarvestProxyURL) != "",
-		OpenAICodexTicketHarvestProxyCount:                     openAICodexTicketProxyCount(settings.OpenAICodexTicketHarvestProxyURL),
+		ClaudeCodeClientVersion:                                settings.ClaudeCodeClientVersion,
+		ClaudeCodeClientVersionSynced:                          settings.ClaudeCodeClientVersionSynced,
+		ClaudeCodeVersionAutoSyncEnabled:                       settings.ClaudeCodeVersionAutoSyncEnabled,
 		MinCodexVersion:                                        settings.MinCodexVersion,
 		MaxCodexVersion:                                        settings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  settings.CodexCLIOnlyBlacklist,
@@ -396,9 +396,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PluginManagementEnabled: settings.PluginManagementEnabled,
 		ModelPlazaDescription:   settings.ModelPlazaDescription,
 
-		AffiliateEnabled:         settings.AffiliateEnabled,
-		SharedPoolEnabled:        settings.SharedPoolEnabled,
-		SharedPoolFeeRatePercent: settings.SharedPoolFeeRatePercent,
+		AffiliateEnabled: settings.AffiliateEnabled,
 
 		AccountSchedulingThresholds: settings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:  settings.AllowUserViewErrorRequests,

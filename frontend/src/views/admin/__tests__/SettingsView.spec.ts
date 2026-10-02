@@ -11,7 +11,6 @@ import SettingsView from "../SettingsView.vue";
 const {
   getSettings,
   updateSettings,
-  testCodexTicketProxy,
   getWebSearchEmulationConfig,
   updateWebSearchEmulationConfig,
   getAdminApiKey,
@@ -40,7 +39,6 @@ const {
 } = vi.hoisted(() => ({
   getSettings: vi.fn(),
   updateSettings: vi.fn(),
-  testCodexTicketProxy: vi.fn(),
   getWebSearchEmulationConfig: vi.fn(),
   updateWebSearchEmulationConfig: vi.fn(),
   getAdminApiKey: vi.fn(),
@@ -88,7 +86,6 @@ vi.mock("@/api", () => ({
     settings: {
       getSettings,
       updateSettings,
-      testCodexTicketProxy,
       getWebSearchEmulationConfig,
       updateWebSearchEmulationConfig,
       getAdminApiKey,
@@ -212,8 +209,9 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiExperimentalScheduler.lowRatePriorityTitle": "低倍率优先",
     "admin.settings.openaiExperimentalScheduler.lowRatePriorityDescription": "开启后优先选择计费倍率较低的账号；倍率相同时，再比较账号优先级和当前负载等。启用实验调度策略后，此开关不生效。",
     "admin.settings.openaiExperimentalScheduler.oauthRateTitle": "OAuth 调度参考倍率",
-    "admin.settings.openaiExperimentalScheduler.oauthRatePriorityDescription": "同一分组同时包含 API Key 和 OAuth 账号时，OAuth 账号按此倍率与已探测的 API Key 计费倍率一起排序。",
-    "admin.settings.openaiExperimentalScheduler.oauthRateWeightedDescription": "同一分组同时包含 API Key 和 OAuth 账号时，计算“计费倍率”得分时，OAuth 账号按此倍率参与计算。",
+    "admin.settings.openaiExperimentalScheduler.oauthRatePriorityDescription": "OAuth 账号按此参考倍率参与低倍率优先排序；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateWeightedDescription": "计算“计费倍率”得分时，OAuth 账号使用此参考倍率；留空时使用各自的账号倍率。API Key 账号优先使用有效探测倍率，无有效探测时使用账号倍率。",
+    "admin.settings.openaiExperimentalScheduler.oauthRateInvalid": "OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。",
     "admin.settings.openaiExperimentalScheduler.stickyWeightedTitle": "粘性加权",
     "admin.settings.openaiExperimentalScheduler.stickyWeightedDescription": "开启后 previous_response_id 和 session_hash 粘性进入高级调度打分；关闭时仍按旧逻辑硬命中粘性账号。",
     "admin.settings.openaiExperimentalScheduler.subscriptionPriorityTitle": "订阅优先",
@@ -641,7 +639,6 @@ describe("admin SettingsView payment visible method controls", () => {
   beforeEach(() => {
     getSettings.mockReset();
     updateSettings.mockReset();
-    testCodexTicketProxy.mockReset().mockResolvedValue({ proxy_index: 1, success: true, exit_ip: "198.51.100.1", latency_ms: 50 });
     getWebSearchEmulationConfig.mockReset();
     updateWebSearchEmulationConfig.mockReset();
     getAdminApiKey.mockReset();
@@ -732,71 +729,31 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
-  it("loads and saves the multiline gateway harvest pool with masked rows preserved", async () => {
-    const storedPool = "http://user:***@old.example.com:8080\nsocks5h://user:***@other.example.com:1080";
+  it.each([true, false])("keeps the ticket master switch while removing proxy pool controls and payload (enabled=%s)", async (enabled) => {
+    // An older backend may still return these retired fields; saving settings
+    // must not send them back or expose a pool/test control.
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
-      openai_codex_ticket_enabled: true,
-      openai_codex_ticket_harvest_proxy_url: storedPool,
-      openai_codex_ticket_harvest_proxy_configured: true,
-    });
-    const wrapper = mountView();
-    await flushPromises();
-    await openGatewayTab(wrapper);
-    expect(wrapper.find("#codex-ticket-enabled").exists()).toBe(true);
-    const input = wrapper.get<HTMLTextAreaElement>("#codex-ticket-harvest-proxy");
-    expect(input.element.tagName).toBe("TEXTAREA");
-    expect(input.element.value).toBe(storedPool);
-    const editedPool = storedPool + "\nhttp://new:password@third.example.com:8080";
-    await input.setValue(editedPool);
-    await wrapper.find("form").trigger("submit.prevent");
-    await flushPromises();
-    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({
-      openai_codex_ticket_enabled: true,
-      openai_codex_ticket_harvest_proxy_url: editedPool,
-    });
-    expect(updateSettings.mock.calls[0]?.[0]).not.toHaveProperty("openai_codex_ticket_harvest_proxy_configured");
-    wrapper.unmount();
-  });
-
-  it("submits an explicit empty pool when all harvest proxy lines are removed", async () => {
-    getSettings.mockResolvedValueOnce({
-      ...baseSettingsResponse,
-      openai_codex_ticket_enabled: true,
+      openai_codex_ticket_enabled: !enabled,
+      openai_codex_ticket_harvest_proxy_mode: "pool",
       openai_codex_ticket_harvest_proxy_url: "http://user:***@old.example.com:8080",
+      openai_codex_ticket_harvest_proxy_configured: true,
+      openai_codex_ticket_harvest_proxy_count: 1,
     });
     const wrapper = mountView();
     await flushPromises();
     await openGatewayTab(wrapper);
-    await wrapper.get("#codex-ticket-harvest-proxy").setValue("");
+    await wrapper.get("#codex-ticket-enabled").setValue(enabled);
+    expect(wrapper.find("#codex-ticket-proxy-mode").exists()).toBe(false);
+    expect(wrapper.find("#codex-ticket-harvest-proxy").exists()).toBe(false);
+    expect(wrapper.find('[data-testid="codex-ticket-proxy-test"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="codex-ticket-account-route-hint"]').text())
+      .toContain("codexTicketAccountRouteHint");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
-    expect(updateSettings.mock.calls[0]?.[0]?.openai_codex_ticket_harvest_proxy_url).toBe("");
-    wrapper.unmount();
-  });
-
-  it("tests only saved proxy indices and updates the test snapshot after saving", async () => {
-    const storedPool = "http://user:***@old.example.com:8080";
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_proxy_url: storedPool, openai_codex_ticket_harvest_proxy_count: 1 });
-    const wrapper = mountView();
-    await flushPromises();
-    await openGatewayTab(wrapper);
-    const button = wrapper.get('[data-testid="codex-ticket-test-exit"]');
-    expect(button.attributes("disabled")).toBeUndefined();
-    await button.trigger("click");
-    await flushPromises();
-    expect(testCodexTicketProxy).toHaveBeenCalledWith(1, expect.any(AbortSignal));
-    const changedPool = storedPool + "\nhttp://new:password@new.example.com:8080";
-    await wrapper.get("#codex-ticket-harvest-proxy").setValue(changedPool);
-    expect(button.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain("codexTicketProxyTest.saveFirst");
-    const savedPool = storedPool + "\nhttp://new:***@new.example.com:8080";
-    updateSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_codex_ticket_harvest_proxy_url: savedPool, openai_codex_ticket_harvest_proxy_count: 2 });
-    await wrapper.find("form").trigger("submit.prevent");
-    await flushPromises();
-    expect(wrapper.get<HTMLTextAreaElement>("#codex-ticket-harvest-proxy").element.value).toBe(savedPool);
-    expect(button.attributes("disabled")).toBeUndefined();
-    expect(wrapper.findAll("#codex-ticket-proxy-index option")).toHaveLength(2);
+    const payload = updateSettings.mock.calls[0]?.[0];
+    expect(payload?.openai_codex_ticket_enabled).toBe(enabled);
+    expect(Object.keys(payload ?? {}).some((key) => key.startsWith("openai_codex_ticket_harvest_proxy_"))).toBe(false);
     wrapper.unmount();
   });
 
@@ -1554,6 +1511,54 @@ describe("admin SettingsView payment visible method controls", () => {
     });
   });
 
+  it.each([false, true])("clears the OAuth rate without losing zero (weighted=%s)", async (weighted) => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_low_upstream_rate_priority_enabled: !weighted,
+      openai_advanced_scheduler_enabled: weighted,
+      openai_oauth_scheduling_rate_multiplier: 0.7,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const input = wrapper.get('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
+    expect(input.attributes("required")).toBeUndefined();
+    await input.setValue("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: null,
+    }));
+    await input.setValue("0");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: 0,
+    }));
+    updateSettings.mockClear();
+    await input.setValue("-1");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledWith("OAuth 调度参考倍率必须是非负数字，或留空以使用账号倍率。");
+  });
+
+  it("loads and preserves an explicitly cleared OAuth rate", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_advanced_scheduler_enabled: true,
+      openai_oauth_scheduling_rate_multiplier: null,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const input = wrapper.get<HTMLInputElement>('[data-testid="openai-oauth-scheduling-rate-multiplier"]');
+    expect(input.element.value).toBe("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      openai_oauth_scheduling_rate_multiplier: null,
+    }));
+  });
+
   it("places and explains rate controls for both scheduling modes", async () => {
     const wrapper = mountView();
 
@@ -1566,7 +1571,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await lowRateToggle.setValue(true);
     const priorityModeText = wrapper.text();
     expect(priorityModeText).toContain(
-      "同一分组同时包含 API Key 和 OAuth 账号时，OAuth 账号按此倍率与已探测的 API Key 计费倍率一起排序。",
+      "OAuth 账号按此参考倍率参与低倍率优先排序；留空时使用各自的账号倍率。",
     );
     expect(priorityModeText.indexOf("低倍率优先")).toBeLessThan(
       priorityModeText.indexOf("OAuth 调度参考倍率"),
@@ -1600,10 +1605,10 @@ describe("admin SettingsView payment visible method controls", () => {
     ).toBe(true);
     const weightedModeText = wrapper.text();
     expect(weightedModeText).toContain(
-      "同一分组同时包含 API Key 和 OAuth 账号时，计算“计费倍率”得分时，OAuth 账号按此倍率参与计算。",
+      "计算“计费倍率”得分时，OAuth 账号使用此参考倍率；留空时使用各自的账号倍率。",
     );
     expect(weightedModeText).not.toContain(
-      "OAuth 账号按此倍率与已探测的 API Key 计费倍率一起排序。",
+      "OAuth 账号按此参考倍率参与低倍率优先排序；",
     );
     expect(weightedModeText.indexOf("订阅优先")).toBeLessThan(
       weightedModeText.indexOf("OAuth 调度参考倍率"),

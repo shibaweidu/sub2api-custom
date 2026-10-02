@@ -169,10 +169,9 @@ type SystemSettings struct {
 	DefaultBalance               float64
 	RiskControlEnabled           bool
 	CyberSessionBlockEnabled     bool
+	CyberPolicyUserAllowlist     string
 	CyberSessionBlockTTLSeconds  int
 	AffiliateEnabled             bool
-	SharedPoolFeeRatePercent     float64
-	SharedPoolEnabled            bool
 	AffiliateRebateRate          float64
 	AffiliateRebateFreezeHours   int
 	AffiliateRebateDurationDays  int
@@ -254,7 +253,9 @@ type SystemSettings struct {
 	OpenAICodexClientVersionSynced         string // 自动同步到的官方最新稳定版版本号（只读展示）
 	OpenAICodexVersionAutoSyncEnabled      bool   // 是否启用 Codex 客户端版本号自动同步（默认 true）
 	OpenAICodexTicketEnabled               bool   // Codex 292/332 打票总开关；关闭则不打票不注入
-	OpenAICodexTicketHarvestProxyURL       string // Codex 打票代理池，每行一个 URL；显式空值清空
+	ClaudeCodeClientVersion                string // 出站声明的 Claude Code CLI 客户端版本号（管理员覆写）；空值跟随自动同步值
+	ClaudeCodeClientVersionSynced          string // 自动同步到的官方最新版本号（只读展示）
+	ClaudeCodeVersionAutoSyncEnabled       bool   // 是否启用 Claude Code 客户端版本号自动同步（默认 true）
 	MinCodexVersion                        string // codex_cli_only 最低 Codex 引擎版本；空=不检查
 	MaxCodexVersion                        string // codex_cli_only 最高 Codex 引擎版本；空=不检查
 	CodexCLIOnlyBlacklist                  string // codex_cli_only 全局黑名单 JSON（[]AllowedClientEntry，OR deny）
@@ -273,7 +274,7 @@ type SystemSettings struct {
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
-	OpenAIOAuthSchedulingRateMultiplier                    float64
+	OpenAIOAuthSchedulingRateMultiplier                    *float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool
@@ -414,9 +415,7 @@ type PublicSettings struct {
 	PluginManagementEnabled bool `json:"plugin_management_enabled"`
 
 	// Affiliate (邀请返利) feature toggle
-	AffiliateEnabled         bool    `json:"affiliate_enabled"`
-	SharedPoolFeeRatePercent float64 `json:"shared_pool_fee_rate_percent"`
-	SharedPoolEnabled        bool    `json:"shared_pool_enabled"`
+	AffiliateEnabled bool `json:"affiliate_enabled"`
 
 	// 风控中心功能开关
 	RiskControlEnabled bool `json:"risk_control_enabled"`
@@ -612,7 +611,7 @@ func DefaultOpenAIAPIKeyHealthBreakerSettings() *OpenAIAPIKeyHealthBreakerSettin
 	}
 }
 
-// DefaultOverloadCooldownSettings 返回默认的过载冷却配置（启用，10分钟）
+// DefaultOverloadCooldownSettings 返回默认的过载冷却配置（关闭，启用后默认10分钟）
 func DefaultOverloadCooldownSettings() *OverloadCooldownSettings {
 	return &OverloadCooldownSettings{
 		Enabled:         false,

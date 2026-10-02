@@ -304,113 +304,6 @@
             </div>
           </div>
 
-          <!-- Custom 429 cooldown removed; official upstream rate-limit handling remains enabled. -->
-          <div v-if="false" class="card">
-            <div
-              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
-            >
-              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-                {{ t("admin.settings.rateLimit429Cooldown.title") }}
-              </h2>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {{ t("admin.settings.rateLimit429Cooldown.description") }}
-              </p>
-            </div>
-            <div class="space-y-5 p-6">
-              <div
-                v-if="rateLimit429CooldownLoading"
-                class="flex items-center gap-2 text-gray-500"
-              >
-                <div
-                  class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
-                ></div>
-                {{ t("common.loading") }}
-              </div>
-
-              <template v-else>
-                <div class="flex items-center justify-between">
-                  <div>
-                    <label class="font-medium text-gray-900 dark:text-white">{{
-                      t("admin.settings.rateLimit429Cooldown.enabled")
-                    }}</label>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                      {{ t("admin.settings.rateLimit429Cooldown.enabledHint") }}
-                    </p>
-                  </div>
-                  <Toggle v-model="rateLimit429CooldownForm.enabled" />
-                </div>
-
-                <div
-                  v-if="rateLimit429CooldownForm.enabled"
-                  class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700"
-                >
-                  <div>
-                    <label
-                      class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                      {{
-                        t(
-                          "admin.settings.rateLimit429Cooldown.cooldownSeconds",
-                        )
-                      }}
-                    </label>
-                    <input
-                      v-model.number="rateLimit429CooldownForm.cooldown_seconds"
-                      type="number"
-                      min="1"
-                      max="7200"
-                      class="input w-32"
-                    />
-                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                      {{
-                        t(
-                          "admin.settings.rateLimit429Cooldown.cooldownSecondsHint",
-                        )
-                      }}
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
-                >
-                  <button
-                    type="button"
-                    @click="saveRateLimit429CooldownSettings"
-                    :disabled="rateLimit429CooldownSaving"
-                    class="btn btn-primary btn-sm"
-                  >
-                    <svg
-                      v-if="rateLimit429CooldownSaving"
-                      class="mr-1 h-4 w-4 animate-spin"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        class="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        stroke-width="4"
-                      ></circle>
-                      <path
-                        class="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                    {{
-                      rateLimit429CooldownSaving
-                        ? t("common.saving")
-                        : t("common.save")
-                    }}
-                  </button>
-                </div>
-              </template>
-            </div>
-          </div>
-
           <!-- Stream Timeout Settings -->
           <div class="card">
             <div
@@ -4551,36 +4444,9 @@
                     v-model="form.openai_codex_ticket_enabled"
                   />
                 </div>
-                <div>
-                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
-                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxy") }}
-                  </h3>
-                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyDesc") }}
-                  </p>
-                  <textarea
-                    id="codex-ticket-harvest-proxy"
-                    v-model="form.openai_codex_ticket_harvest_proxy_url"
-                    rows="5"
-                    class="input mt-3 w-full resize-y font-mono text-sm"
-                    :placeholder="t('admin.settings.gatewayForwarding.codexTicketHarvestProxyPlaceholder')"
-                    autocomplete="off"
-                    autocapitalize="off"
-                    :spellcheck="false"
-                  />
-                  <p
-                    v-if="form.openai_codex_ticket_harvest_proxy_configured"
-                    class="mt-1.5 text-xs text-gray-500 dark:text-gray-400"
-                  >
-                    {{ t("admin.settings.gatewayForwarding.codexTicketHarvestProxyConfigured") }}
-                  </p>
-                  <CodexTicketProxyTest
-                    :proxy-pool="form.openai_codex_ticket_harvest_proxy_url"
-                    :saved-proxy-pool="savedCodexTicketProxyPool"
-                    :saved-proxy-count="savedCodexTicketProxyCount"
-                    :disabled="loading || saving || loadFailed"
-                  />
-                </div>
+                <p class="text-sm text-gray-500 dark:text-gray-400" data-testid="codex-ticket-account-route-hint">
+                  {{ t("admin.settings.gatewayForwarding.codexTicketAccountRouteHint") }}
+                </p>
                 <div>
                   <h3 class="text-base font-semibold text-gray-900 dark:text-white">
                     {{ t("admin.settings.gatewayForwarding.codexClientRestrictionTitle") }}
@@ -4989,6 +4855,90 @@
             </div>
           </div>
 
+          <!-- OpenCode Go Usage Settings -->
+          <div class="card" data-testid="opencode-go-usage-global-settings">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.opencodeGoUsage.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.opencodeGoUsage.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div v-if="opencodeGoUsageLoading" class="flex items-center gap-2 text-gray-500">
+                <div class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"></div>
+                {{ t("common.loading") }}
+              </div>
+              <template v-else>
+                <div class="flex items-center justify-between gap-4">
+                  <div>
+                    <label class="font-medium text-gray-900 dark:text-white">
+                      {{ t("admin.settings.opencodeGoUsage.enabled") }}
+                    </label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.opencodeGoUsage.enabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="opencodeGoUsageForm.enabled"
+                    :aria-label="t('admin.settings.opencodeGoUsage.enabled')"
+                    data-testid="opencode-go-usage-global-enabled"
+                  />
+                </div>
+                <div v-if="opencodeGoUsageForm.enabled" class="space-y-4 border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" for="opencode-go-usage-debounce">
+                      {{ t("admin.settings.opencodeGoUsage.debounceMinutes") }}
+                    </label>
+                    <input
+                      id="opencode-go-usage-debounce"
+                      v-model.number="opencodeGoUsageForm.debounce_minutes"
+                      type="number"
+                      min="1"
+                      max="60"
+                      class="input w-32"
+                      data-testid="opencode-go-usage-global-debounce"
+                      @keydown.enter.prevent="saveOpenCodeGoUsageSettings"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.opencodeGoUsage.debounceHint") }}
+                    </p>
+                  </div>
+                  <div>
+                    <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" for="opencode-go-usage-interval">
+                      {{ t("admin.settings.opencodeGoUsage.intervalMinutes") }}
+                    </label>
+                    <input
+                      id="opencode-go-usage-interval"
+                      v-model.number="opencodeGoUsageForm.interval_minutes"
+                      type="number"
+                      min="5"
+                      max="1440"
+                      class="input w-32"
+                      data-testid="opencode-go-usage-global-interval"
+                      @keydown.enter.prevent="saveOpenCodeGoUsageSettings"
+                    />
+                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.opencodeGoUsage.intervalHint") }}
+                    </p>
+                  </div>
+                </div>
+                <div class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700">
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm"
+                    :disabled="opencodeGoUsageSaving"
+                    data-testid="opencode-go-usage-global-save"
+                    @click="saveOpenCodeGoUsageSettings"
+                  >
+                    {{ opencodeGoUsageSaving ? t("common.saving") : t("common.save") }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <!-- Gateway Scheduling Settings -->
           <div class="card">
             <div
@@ -5132,7 +5082,6 @@
                     class="input pr-8"
                     data-testid="openai-oauth-scheduling-rate-multiplier"
                     min="0"
-                    required
                     step="0.01"
                     type="number"
                   />
@@ -5221,7 +5170,6 @@
                     class="input pr-8"
                     data-testid="openai-oauth-scheduling-rate-multiplier"
                     min="0"
-                    required
                     step="0.01"
                     type="number"
                   />
@@ -5854,6 +5802,61 @@
                   </p>
                 </div>
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
+              </div>
+
+              <!-- Claude Code 客户端版本号 -->
+              <div>
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.claudeCodeClientVersion",
+                    )
+                  }}
+                </label>
+                <input
+                  v-model="form.claude_code_client_version"
+                  type="text"
+                  class="input w-full font-mono text-sm"
+                  placeholder="2.1.280"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.claudeCodeClientVersionHint",
+                    )
+                  }}
+                </p>
+              </div>
+
+              <!-- Claude Code 版本号自动同步 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.claudeCodeVersionAutoSync",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.claudeCodeVersionAutoSyncHint",
+                      )
+                    }}
+                  </p>
+                  <p
+                    v-if="claudeSyncedVersionLabel"
+                    class="mt-0.5 text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ claudeSyncedVersionLabel }}
+                  </p>
+                </div>
+                <Toggle v-model="form.claude_code_version_auto_sync_enabled" />
               </div>
 
             </div>
@@ -7403,6 +7406,18 @@
               <Toggle v-model="form.risk_control_enabled" />
             </div>
 
+            <div>
+              <label class="input-label">
+                {{ t('admin.settings.features.riskControl.riskControlUserAllowlist') }}
+              </label>
+              <OpenAIFastPolicyUserSelector
+                v-model="riskControlAllowlistedUserIds"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.riskControl.riskControlUserAllowlistHint') }}
+              </p>
+            </div>
+
             <div class="flex items-center justify-between">
               <div>
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -7452,12 +7467,6 @@
               </div>
               <Toggle v-model="form.affiliate_enabled" />
             </div>
-
-            <div class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700">
-              <div><label class="text-sm font-medium text-gray-700 dark:text-gray-300">共享账号池</label><p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">允许用户上传账号并加入共享池</p></div>
-              <Toggle v-model="form.shared_pool_enabled" />
-            </div>
-            <div><label class="input-label">共享池平台抽成比例 (%)</label><input v-model.number="form.shared_pool_fee_rate_percent" type="number" min="0" max="100" step="0.01" class="input w-full" /></div>
 
             <div v-if="form.affiliate_enabled" class="space-y-6">
               <div class="flex items-center justify-between">
@@ -8960,7 +8969,6 @@ import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
-import CodexTicketProxyTest from "@/views/admin/settings/CodexTicketProxyTest.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
   useStepUp,
@@ -9088,8 +9096,6 @@ const { copyToClipboard } = useClipboard();
 const loading = ref(true);
 const loadFailed = ref(false);
 const saving = ref(false);
-const savedCodexTicketProxyPool = ref("");
-const savedCodexTicketProxyCount = ref(0);
 const testingSmtp = ref(false);
 const sendingTestEmail = ref(false);
 const smtpPasswordManuallyEdited = ref(false);
@@ -9123,19 +9129,21 @@ const ollamaCloudUsageForm = reactive({
   debounce_minutes: 1,
 });
 
+const opencodeGoUsageLoading = ref(true);
+const opencodeGoUsageSaving = ref(false);
+const opencodeGoUsageForm = reactive({
+  enabled: false,
+  interval_minutes: 15,
+  debounce_minutes: 1,
+});
+
 // Overload Cooldown (529) 状态
 const overloadCooldownLoading = ref(true);
 const overloadCooldownSaving = ref(false);
 const overloadCooldownForm = reactive({
-  enabled: true,
+  enabled: false,
   cooldown_minutes: 10,
 });
-
-// Custom 429 cooldown settings are intentionally not exposed.
-const rateLimit429CooldownLoading = ref(false)
-const rateLimit429CooldownSaving = ref(false)
-const rateLimit429CooldownForm = reactive({ enabled: false, cooldown_seconds: 0 })
-const saveRateLimit429CooldownSettings = () => undefined
 
 // Panel API Rate Limit 状态
 const panelRateLimitLoading = ref(true);
@@ -9627,6 +9635,7 @@ type SettingsForm = Omit<
   | "wechat_connect_open_enabled"
   | "wechat_connect_mp_enabled"
   | "wechat_connect_mobile_enabled"
+  | "openai_oauth_scheduling_rate_multiplier"
 > & {
   /** Form always binds a concrete boolean (SystemSettings marks this optional). */
   channel_monitor_hide_throughput: boolean;
@@ -9652,7 +9661,7 @@ type SettingsForm = Omit<
   google_oauth_client_secret: string;
   force_email_on_third_party_signup: boolean;
   openai_low_upstream_rate_priority_enabled: boolean;
-  openai_oauth_scheduling_rate_multiplier: number;
+  openai_oauth_scheduling_rate_multiplier: number | "" | null;
   openai_advanced_scheduler_enabled: boolean;
   openai_advanced_scheduler_sticky_weighted_enabled: boolean;
   openai_advanced_scheduler_subscription_priority_enabled: boolean;
@@ -9719,6 +9728,7 @@ const form = reactive<SettingsForm>({
   hide_ccs_import_button: false,
   payment_enabled: false,
   risk_control_enabled: false,
+  cyber_policy_user_allowlist: "",
   cyber_session_block_enabled: false,
   cyber_session_block_ttl_seconds: 3600,
   payment_min_amount: 1,
@@ -9929,9 +9939,10 @@ const form = reactive<SettingsForm>({
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
   openai_codex_ticket_enabled: false,
-  openai_codex_ticket_harvest_proxy_url: "",
-  openai_codex_ticket_harvest_proxy_configured: false,
-  openai_codex_ticket_harvest_proxy_count: 0,
+  claude_code_client_version: "",
+  // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
+  claude_code_client_version_synced: "",
+  claude_code_version_auto_sync_enabled: true,
   // codex_cli_only 加固
   min_codex_version: "",
   max_codex_version: "",
@@ -9965,8 +9976,6 @@ const form = reactive<SettingsForm>({
   plugin_management_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
-  shared_pool_enabled: false,
-  shared_pool_fee_rate_percent: 10,
   // Allow user view error requests
   allow_user_view_error_requests: false,
 });
@@ -9982,6 +9991,19 @@ function applyCaptchaSelection(provider: CaptchaProviderSelection | null): void 
   form.tencent_captcha_enabled = provider === "tencent";
   form.aliyun_captcha_enabled = provider === "aliyun";
 }
+
+// Keep the settings API representation as user IDs; the selector displays emails.
+const riskControlAllowlistedUserIds = computed<number[]>({
+  get: () => Array.from(new Set(
+    form.cyber_policy_user_allowlist
+      .split(/[,\s]+/)
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0),
+  )),
+  set: (ids) => {
+    form.cyber_policy_user_allowlist = ids.join(",");
+  },
+});
 
 const captchaMasterEnabled = computed({
   get: () =>
@@ -10921,13 +10943,19 @@ const codexSyncedVersionLabel = computed(() => {
   });
 });
 
+const claudeSyncedVersionLabel = computed(() => {
+  const synced = form.claude_code_client_version_synced?.trim();
+  if (!synced) return "";
+  return t("admin.settings.gatewayForwarding.claudeCodeVersionSyncedValue", {
+    version: synced,
+  });
+});
+
 async function loadSettings() {
   loading.value = true;
   loadFailed.value = false;
   try {
     const settings = await adminAPI.settings.getSettings();
-    savedCodexTicketProxyPool.value = settings.openai_codex_ticket_harvest_proxy_url ?? "";
-    savedCodexTicketProxyCount.value = settings.openai_codex_ticket_harvest_proxy_count ?? 0;
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -10935,6 +10963,10 @@ async function loadSettings() {
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
       }
+    }
+    // For this optional override, null explicitly selects per-account rates.
+    if (settings.openai_oauth_scheduling_rate_multiplier === null) {
+      form.openai_oauth_scheduling_rate_multiplier = null;
     }
     syncCaptchaProviderSelection();
     if (!form.claude_oauth_system_prompt_blocks?.trim()) {
@@ -11345,6 +11377,16 @@ async function saveSettings() {
     form.claude_oauth_system_prompt_blocks =
       claudeOAuthSystemPromptBlocksJSON;
 
+    const oauthSchedulingRate = form.openai_oauth_scheduling_rate_multiplier;
+    if (
+      oauthSchedulingRate !== "" &&
+      oauthSchedulingRate !== null &&
+      (!Number.isFinite(oauthSchedulingRate) || oauthSchedulingRate < 0)
+    ) {
+      appStore.showError(t("admin.settings.openaiExperimentalScheduler.oauthRateInvalid"));
+      return;
+    }
+
     const payload: UpdateSettingsRequest = {
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
@@ -11554,8 +11596,9 @@ async function saveSettings() {
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
       openai_codex_ticket_enabled: form.openai_codex_ticket_enabled,
-      openai_codex_ticket_harvest_proxy_url:
-        form.openai_codex_ticket_harvest_proxy_url.trim(),
+      claude_code_client_version: form.claude_code_client_version?.trim() || "",
+      claude_code_version_auto_sync_enabled:
+        form.claude_code_version_auto_sync_enabled,
       min_codex_version: form.min_codex_version?.trim() || "",
       max_codex_version: form.max_codex_version?.trim() || "",
       codex_cli_only_allow_app_server_clients:
@@ -11572,6 +11615,7 @@ async function saveSettings() {
       // Payment configuration
       payment_enabled: form.payment_enabled,
       risk_control_enabled: form.risk_control_enabled,
+      cyber_policy_user_allowlist: form.cyber_policy_user_allowlist,
       cyber_session_block_enabled: form.cyber_session_block_enabled,
       cyber_session_block_ttl_seconds:
         Number(form.cyber_session_block_ttl_seconds) || 3600,
@@ -11607,7 +11651,7 @@ async function saveSettings() {
       openai_low_upstream_rate_priority_enabled:
         form.openai_low_upstream_rate_priority_enabled,
       openai_oauth_scheduling_rate_multiplier:
-        form.openai_oauth_scheduling_rate_multiplier,
+        oauthSchedulingRate === "" ? null : oauthSchedulingRate,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
       openai_advanced_scheduler_sticky_weighted_enabled:
         form.openai_advanced_scheduler_sticky_weighted_enabled,
@@ -11666,8 +11710,6 @@ async function saveSettings() {
       plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
-      shared_pool_enabled: form.shared_pool_enabled,
-      shared_pool_fee_rate_percent: Number(form.shared_pool_fee_rate_percent) || 0,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
     };
 
@@ -11712,13 +11754,14 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
-    savedCodexTicketProxyPool.value = updated.openai_codex_ticket_harvest_proxy_url ?? "";
-    savedCodexTicketProxyCount.value = updated.openai_codex_ticket_harvest_proxy_count ?? 0;
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
       if (value !== null && value !== undefined) {
         (form as Record<string, unknown>)[key] = value;
       }
+    }
+    if (updated.openai_oauth_scheduling_rate_multiplier === null) {
+      form.openai_oauth_scheduling_rate_multiplier = null;
     }
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
@@ -12007,6 +12050,37 @@ async function saveOllamaCloudUsageSettings() {
   }
 }
 
+async function loadOpenCodeGoUsageSettings() {
+  opencodeGoUsageLoading.value = true;
+  try {
+    Object.assign(
+      opencodeGoUsageForm,
+      await adminAPI.accounts.getOpenCodeGoUsageSettings(),
+    );
+  } catch (_error: unknown) {
+    // Keep the fail-safe disabled defaults when this optional setting cannot be loaded.
+  } finally {
+    opencodeGoUsageLoading.value = false;
+  }
+}
+
+async function saveOpenCodeGoUsageSettings() {
+  opencodeGoUsageSaving.value = true;
+  try {
+    const updated = await adminAPI.accounts.updateOpenCodeGoUsageSettings({
+      ...opencodeGoUsageForm,
+    });
+    Object.assign(opencodeGoUsageForm, updated);
+    appStore.showSuccess(t("admin.settings.opencodeGoUsage.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(error, t("admin.settings.opencodeGoUsage.saveFailed")),
+    );
+  } finally {
+    opencodeGoUsageSaving.value = false;
+  }
+}
+
 // Overload Cooldown 方法
 async function loadOverloadCooldownSettings() {
   overloadCooldownLoading.value = true;
@@ -12077,41 +12151,6 @@ async function savePanelRateLimitSettings() {
     panelRateLimitSaving.value = false;
   }
 }
-
-/* async function loadRateLimit429CooldownSettings() {
-  rateLimit429CooldownLoading.value = true;
-  try {
-    const settings = await adminAPI.settings.getRateLimit429CooldownSettings();
-    Object.assign(rateLimit429CooldownForm, settings);
-  } catch (_error: unknown) {
-    // Silent fail - settings will use defaults
-  } finally {
-    rateLimit429CooldownLoading.value = false;
-  }
-} */
-
-/*
-async function saveRateLimit429CooldownSettings() {
-  rateLimit429CooldownSaving.value = true;
-  try {
-    const updated = await adminAPI.settings.updateRateLimit429CooldownSettings({
-      enabled: rateLimit429CooldownForm.enabled,
-      cooldown_seconds: rateLimit429CooldownForm.cooldown_seconds,
-    });
-    Object.assign(rateLimit429CooldownForm, updated);
-    appStore.showSuccess(t("admin.settings.rateLimit429Cooldown.saved"));
-  } catch (error: unknown) {
-    appStore.showError(
-      extractApiErrorMessage(
-        error,
-        t("admin.settings.rateLimit429Cooldown.saveFailed"),
-      ),
-    );
-  } finally {
-    rateLimit429CooldownSaving.value = false;
-  }
-}
-*/
 
 // Stream Timeout 方法
 async function loadStreamTimeoutSettings() {
@@ -12758,6 +12797,7 @@ onMounted(() => {
   loadAdminApiKey();
   loadUpstreamBillingProbeSettings();
   loadOllamaCloudUsageSettings();
+  loadOpenCodeGoUsageSettings();
   loadOverloadCooldownSettings();
   loadPanelRateLimitSettings();
   loadStreamTimeoutSettings();

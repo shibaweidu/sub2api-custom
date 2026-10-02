@@ -169,11 +169,9 @@ export default {
     apiKeys: 'API 密钥',
     batchImage: '批量生图',
     usage: '使用记录',
-    testResults: '渠道测试',
-    tests: '渠道测试管理',
+    testResults: '渠道质量检测',
+    tests: '渠道质量管理',
     redeem: '兑换',
-    sharedPool: '共享账号池',
-    sharedPoolAdmin: '共享账号池管理',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',
     affiliateInviteRecords: '邀请记录',
@@ -216,14 +214,46 @@ export default {
     channelStatus: '渠道状态',
     riskControl: '风控中心',
     securityAudit: '安全审计',
-    contentModeration: '内容审核',
+    contentModeration: '内容审计',
     promptAudit: '提示词审计',
     auditLogs: '操作日志',
   },
 
   tests: {
+    adminReview: {
+      roundOverrideHint: '管理员判定优先于本轮普通规则，晋级仍须满足所有必需的自动条件。指定分组会替换全部原分组，下轮重新判定。',
+      title: '管理员判定', markPass: '判定通过', markFail: '判定不通过',
+      pass: '已判通过', fail: '已判不通过',
+      automaticHold: '自动检测尚未通过',
+      loadFailed: '管理员判定加载失败', saveFailed: '判定未保存，请刷新后重试',
+    },
+    modelCheck: {
+      pass: '一致', fail: '不一致', unknown: '无法确认',
+      requestedModel: '请求模型', upstreamModel: '上游请求模型', returnedModels: '实际返回模型',
+      matchMode: '模型匹配方式', exact: '严格匹配', snapshot: '允许日期快照版本',
+      reasons: {
+        mismatch: '返回的模型字段与上游请求模型不一致。',
+        missing_model: '上游响应未提供模型字段。',
+        missing_upstream_model: '未取得实际发送的上游模型信息。',
+        upstream_error: '本次上游请求未完成，无法确认模型一致性。',
+        invalid_evidence: '上游模型信息无效，无法确认一致性。',
+      },
+    },
+    voting: {
+      title: '质量评议', description: '查看本轮检测输出并投票。质量保护暂停的账号也会保留最新结果供评议。',
+      paused: '质量保护暂停', referenceAnswer: '参考答案', pass: '通过', fail: '不通过',
+      closed: '本轮投票已结束', canChange: '已投票，可改投；每轮只计一票。', oneVote: '每轮每人一票，可改投。',
+      thresholdHint: '不通过超过 {reject} 票时判定不通过；通过达到 {pass} 票且自动检查通过时判定通过。不通过优先。',
+      loadFailed: '暂时无法加载投票结果', voteFailed: '投票未成功，请刷新后重试',
+    },
+    statisticsSuccessRate: '成功率', statisticsCacheRate: '缓存率', statisticsFirstToken: '平均首字',
+    statisticsRequestSamples: '{success} / {total} 次成功', statisticsTokenSamples: '{cached} / {input} 输入 Token 命中缓存', statisticsFirstTokenSamples: '{count} 次有效计时',
+    statisticsWindow: '统计时间', statisticsUpdated: '更新时间',
+    statisticsSourceHint: '根据最近一小时已记录的请求统计。缓存率按输入 Token 加权；首字为有效计时样本的平均值。',
+    statisticsRecentRequests: '最近请求', statisticsRecentRequestsHint: '最近 10 次请求，从左到右由旧到新', statisticsRequestSuccess: '成功', statisticsRequestFailure: '失败',
+    loadMore: '加载更多',
     preview: '预览 HTML', closePreview: '关闭预览', rawOutput: '查看原始输出', noOutput: '未返回内容', running: '测试进行中…', loadFailed: '测试数据加载或保存失败',
-    title: '渠道测试', description: '查看可见分组的渠道测试结果', empty: '暂无渠道测试结果', htmlResult: 'HTML 渠道测试结果', allTypes: '全部类型', groupFilter: '分组', modelFilter: '模型', reasoningEffort: '推理强度', allGroups: '全部分组', allModels: '全部模型', noMatches: '没有符合筛选条件的结果', viewHistory: '查看历史', historyHint: '以下为该分组或账号的历史渠道测试结果', group: '分组', account: '账号', ungrouped: '未分组', unknownType: '未知测试'
+    title: '渠道质量检测', description: '查看分组与账号的质量检测结果', empty: '暂无渠道质量检测结果', htmlResult: 'HTML 渠道质量检测结果', allTypes: '全部类型', groupFilter: '分组', modelFilter: '模型', reasoningEffort: '推理强度', allGroups: '全部分组', allModels: '全部模型', noMatches: '没有符合筛选条件的结果', viewHistory: '查看历史', historyHint: '以下为该分组或账号的历史质量检测结果', group: '分组', account: '账号', ungrouped: '未分组', unknownType: '未知检测', groupCheck: '分组检测', latestResult: '最新结果', previousResult: '历史结果', completed: '已完成', awaitingReview: '待人工判定'
   },
 
   // Auth

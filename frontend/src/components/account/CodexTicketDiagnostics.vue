@@ -23,7 +23,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { CodexTurnTicketStatus } from '@/types'
 import { formatDateTime } from '@/utils/format'
-import { codexTicketErrorKey } from '@/utils/codexTicketDiagnostics'
+import { codexTicketErrorKey, codexTicketProxyKey } from '@/utils/codexTicketDiagnostics'
 
 const props = withDefaults(defineProps<{ ticket: CodexTurnTicketStatus; compact?: boolean }>(), { compact: false })
 const { t } = useI18n()
@@ -46,6 +46,11 @@ const unknownPlan = computed(() => props.ticket.plan_known === false
 const details = computed(() => {
   const ticket = props.ticket
   const result: string[] = []
+  if (ticket.target_length === 292 && ticket.cookie_ready !== undefined) {
+    result.push(ticket.cookie_ready
+      ? t(`${key}.cookieReady`, { seconds: ticket.cookie_remaining_seconds ?? 0 })
+      : t(`${key}.cookieMissing`))
+  }
   if (ticket.attempts !== undefined) result.push(t(`${key}.attempts`, { count: ticket.attempts }))
   if (ticket.successes !== undefined) result.push(t(`${key}.successCount`, { count: ticket.successes }))
   if (ticket.failures !== undefined) result.push(t(`${key}.failureCount`, { count: ticket.failures }))
@@ -56,7 +61,8 @@ const details = computed(() => {
     result.push(t(`${key}.length`, { actual: ticket.last_length, target: ticket.target_length }))
   }
   if (ticket.last_http_status) result.push(t(`${key}.httpStatus`, { status: ticket.last_http_status }))
-  if (ticket.last_proxy_index) result.push(t(`${key}.proxy`, { index: ticket.last_proxy_index }))
+  const proxyKey = codexTicketProxyKey(ticket.last_proxy_source, ticket.last_proxy_index)
+  if (proxyKey) result.push(t(proxyKey, { index: ticket.last_proxy_index ?? 0 }))
   if (ticket.last_attempt_at) result.push(t(`${key}.lastAttempt`, { time: formatDateTime(ticket.last_attempt_at) }))
   if (ticket.next_retry_at && !ticket.in_progress) {
     const retryLabel = ticket.paused ? 'nextCheck' : ticket.ready ? 'nextRefresh' : 'nextRetry'

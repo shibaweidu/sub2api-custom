@@ -566,8 +566,6 @@ export interface Group {
   description: string | null
   platform: GroupPlatform
   rate_multiplier: number
-	/** Internal marker for groups managed by the shared account pool. */
-	is_shared_pool?: boolean
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
 	max_reasoning_effort?: string // Anthropic/OpenAI reasoning ceiling; empty means unlimited
 	max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
@@ -1105,6 +1103,7 @@ export interface UpstreamBillingProbeResult {
 export interface UpstreamBillingRateSnapshotItem {
   account_id: number
   snapshot?: UpstreamBillingProbeSnapshot | null
+  upstream_billing_rate_limited?: boolean
 }
 
 export interface UpstreamBillingRatesResponse {
@@ -1164,12 +1163,16 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export type CodexTicketProxySource = 'account' | 'direct' | 'pool'
+
 export interface CodexTurnTicketStatus {
   model: string
   length?: number
   target_length: number
   ready: boolean
   remaining_seconds: number
+  cookie_ready?: boolean
+  cookie_remaining_seconds?: number
   blocked: boolean
   expires_at?: string
   attempts?: number
@@ -1186,6 +1189,7 @@ export interface CodexTurnTicketStatus {
   last_http_status?: number
   last_length?: number
   last_proxy_index?: number
+  last_proxy_source?: CodexTicketProxySource
   paused?: boolean
   plan_known?: boolean
 }
@@ -1200,12 +1204,53 @@ export interface CodexTicketHistoryEvent {
   length: number
   target_length: number
   proxy_index: number
+  proxy_source?: CodexTicketProxySource
   duration_ms: number
 }
 
 export interface CodexTicketHistoryResponse {
   events: CodexTicketHistoryEvent[]
   limit: number
+}
+
+export type OpenCodeGoUsageStatus = 'ok' | 'unauthorized' | 'failed'
+
+export interface OpenCodeGoUsageWindow {
+  status?: string
+  percent: number
+  resets_at?: string
+}
+
+export interface OpenCodeGoUsageData {
+  rolling?: OpenCodeGoUsageWindow
+  weekly?: OpenCodeGoUsageWindow
+  monthly?: OpenCodeGoUsageWindow
+}
+
+export interface OpenCodeGoUsageSnapshot {
+  status: OpenCodeGoUsageStatus
+  data?: OpenCodeGoUsageData
+  fetched_at?: string
+  last_attempt_at?: string
+  next_refresh_at?: string
+  failure_count?: number
+  http_status?: number
+  last_error?: string
+}
+
+export interface OpenCodeGoUsageState {
+  account_id: number
+  eligible: boolean
+  auto_refresh_enabled: boolean
+  snapshot?: OpenCodeGoUsageSnapshot
+}
+
+export interface OpenCodeGoUsageSettings {
+  enabled: boolean
+  /** Max wait while model requests keep arriving (minutes). */
+  interval_minutes: number
+  /** Trailing quiet period after the latest model request (minutes). */
+  debounce_minutes: number
 }
 
 export interface Account {
@@ -1222,6 +1267,7 @@ export interface Account {
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
   codex_turn_tickets?: CodexTurnTicketStatus[]
+  upstream_billing_rate_limited?: boolean
   /** Resolved gateway and account policy for Codex 292 / 332 tickets. */
   codex_ticket_config?: {
     gateway_enabled: boolean
@@ -1230,17 +1276,24 @@ export interface Account {
     fail_closed: boolean
     target_length: number
   }
+  opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
+    upstream_billing_rate_limit?: number | null
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     codex_reset_credit_snapshot?: {
       available_count?: number
       credits?: { expires_at?: string }[]
     }
+    codex_credits_snapshot?: {
+      credits: { has_credits: boolean; unlimited: boolean; balance: string | null } | null
+      fetched_at: number
+    }
+    codex_referral_snapshot?: import('./openaiReferrals').OpenAIReferralEligibility | null
     auto_reset_credit_enabled?: boolean
     auto_reset_credit_5h_threshold?: number
     auto_reset_credit_7d_threshold?: number
@@ -1272,9 +1325,7 @@ export interface Account {
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
-  shared_total_call_count?: number
-  shared_listing_status?: string
-  status: 'active' | 'inactive' | 'error'
+  status: 'active' | 'inactive' | 'error' | 'quality_paused'
   error_message: string | null
   last_used_at: string | null
   expires_at: number | null
@@ -1570,7 +1621,7 @@ export interface UpdateAccountRequest {
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
   schedulable?: boolean
-  status?: 'active' | 'inactive' | 'error'
+  status?: 'active' | 'inactive' | 'error' | 'quality_paused'
   group_ids?: number[]
   expires_at?: number | null
   auto_pause_on_expired?: boolean
@@ -2222,7 +2273,6 @@ export interface UsageQueryParams {
   page?: number
   page_size?: number
   api_key_id?: number
-  shared_only?: boolean
   user_id?: number
   account_id?: number
   group_id?: number
@@ -2510,10 +2560,10 @@ export interface TestType {
   name: string
   key: string
   description?: string | null
-  output_kind: 'html' | 'number' | 'text' | string
+  output_kind: 'html' | 'number' | 'text' | 'statistics' | 'model_check' | string
   prompt: string
   enabled: boolean
-  /** Controls the order of test type tabs shown to end users. */
+  /** Controls the order of detection types in each account's quality results. */
   sort_order?: number
   created_at?: string
   updated_at?: string
@@ -2521,34 +2571,161 @@ export interface TestType {
 
 export interface TestPlan {
   id: number
+  /** Ordered strategy groups; this order is also used by the user result tabs. */
+  group_ids: number[]
+  migration_note?: string
   name?: string
-  /** Controls the order of this rule's group in user-facing test results. */
+  /** Controls the display order of this strategy. */
   sort_order?: number
   test_definition_id?: number | null
+  test_definition_ids?: number[]
   group_id?: number | null
   account_id?: number | null
   /** Execution target selected by the administrator. */
   target_mode?: 'group' | 'all_accounts' | 'account'
   test_definition?: TestType | null
+  test_definitions?: TestType[]
   model_id?: string
   /** Optional effort forwarded to the selected model (Codex-style). */
   reasoning_effort?: string | null
   cron_expression?: string
   enabled: boolean
   max_results?: number
+  protection?: TestProtectionConfig
   last_run_at?: string | null
   next_run_at?: string | null
   created_at?: string
   updated_at?: string
 }
 
+export type TestProtectionMetric = 'success_rate' | 'cache_rate' | 'avg_first_token_ms' | 'latency_ms' | 'output_numeric'
+export interface TestProtectionThreshold {
+  metric: TestProtectionMetric
+  operator: 'lt' | 'gt'
+  value: number
+}
+export interface TestOutcomeAction {
+  scheduling: 'keep' | 'pause' | 'resume'
+  group_mode: 'keep' | 'assign'
+  group_ids?: number[]
+}
+export interface TestProtectionRecovery {
+  enabled: boolean
+  cooldown_seconds: number
+  trial_seconds: number
+  max_requests: number
+  min_samples: number
+  recover_rate: number
+}
+export interface TestProtectionVote {
+  enabled: boolean
+  public_enabled?: boolean
+  reject_above: number
+  pass_at_least: number
+}
+export interface TestProtectionRule {
+  test_definition_id: number
+  priority: number
+  required_pass: boolean
+  thresholds?: TestProtectionThreshold[]
+  min_samples?: number
+  pause_on_failure?: boolean
+  expected_answer?: string
+  answer_match?: 'exact' | 'contains' | 'numeric'
+  model_match?: 'exact' | 'snapshot'
+  vote?: TestProtectionVote
+  on_pass?: TestOutcomeAction
+  on_fail?: TestOutcomeAction
+  recovery?: TestProtectionRecovery
+}
+export interface TestProtectionConfig {
+  enabled: boolean
+  mode?: 'per_test' | 'combined'
+  rules: TestProtectionRule[]
+  combinations?: TestCombinationRule[]
+}
+export interface TestCombinationCondition {
+  operator: 'all' | 'any' | 'test'
+  conditions?: TestCombinationCondition[]
+  test_definition_id?: number
+  verdict?: 'pass' | 'fail'
+}
+export interface TestCombinationRule {
+  id: string
+  name: string
+  priority: number
+  condition: TestCombinationCondition
+  action: TestOutcomeAction
+}
+export type TestVote = 'pass' | 'fail'
+export interface TestVoteResult {
+  result: TestResult
+  voting: {
+    enabled: boolean
+    open: boolean
+    pass_count: number
+    fail_count: number
+    my_vote?: TestVote
+    reject_above: number
+    pass_at_least: number
+    reference_answer?: string
+    account_paused: boolean
+  }
+}
+
+export interface TestStatisticsRecentRequest {
+  success: boolean
+  created_at: string
+}
+
+export interface TestOutputStatistics {
+  window_start: string
+  window_end: string
+  total_requests: number
+  success_requests: number
+  failed_requests: number
+  success_rate: number | null
+  cache_rate: number | null
+  avg_first_token_ms: number | null
+  first_token_samples: number
+  cache_read_tokens: number
+  cache_input_tokens: number
+  /** Eligible streaming and WebSocket cache observations; older snapshots may omit this field. */
+  cache_samples?: number
+  /** Latest ten outcomes, newest first; older snapshots may omit this field. */
+  recent_requests?: TestStatisticsRecentRequest[] | null
+}
+
+export interface TestOutputModelCheck {
+  requested_model: string
+  upstream_model: string
+  returned_models: string[]
+  match_mode: 'exact' | 'snapshot'
+  verdict: 'pass' | 'fail' | 'unknown'
+  reason: 'match' | 'mismatch' | 'missing_model' | 'missing_upstream_model' | 'upstream_error' | 'invalid_evidence'
+}
+
+export interface TestProtectionDecision {
+  status?: 'applied' | 'unchanged' | 'pending' | 'disabled' | 'skipped' | 'error'
+  verdict: 'pass' | 'fail' | 'pending' | string
+  reason?: string
+  scheduling?: 'keep' | 'pause' | 'resume' | string
+  group_ids?: number[]
+  added_group_ids?: number[]
+  removed_group_ids?: number[]
+}
+
 export interface TestResult {
+  /** Returned only by administrator result endpoints. */
+  account_name?: string
   plan_name?: string
   test_name?: string
-  /** Configured test type order for the user-facing tabs. */
+  /** Configured check type order within the account's quality results. */
   test_order?: number
-  /** Configured test rule/plan order used to derive group display order. */
+  /** Configured display order of the originating test rule/plan. */
   plan_order?: number
+  /** Live display order of the account's current group; preferred over plan_order. */
+  group_order?: number
   group_name?: string
   account_id?: number | null
   target_mode?: 'group' | 'all_accounts' | 'account'
@@ -2562,9 +2739,12 @@ export interface TestResult {
   /** Reasoning level used for this test execution, when explicitly selected. */
   reasoning_effort?: string | null
   status: string
-  output_kind: 'html' | 'number' | 'text' | string
+  output_kind: 'html' | 'number' | 'text' | 'statistics' | 'model_check' | string
   output_html?: string | null
   output_numeric?: number | null
+  output_statistics?: TestOutputStatistics | null
+  output_model_check?: TestOutputModelCheck | null
+  protection_decision?: TestProtectionDecision | null
   response_text?: string | null
   error_message?: string | null
   latency_ms?: number | null
@@ -2588,15 +2768,14 @@ export interface UpdateTestTypeRequest extends Partial<CreateTestTypeRequest> {}
 export interface CreateTestPlanRequest {
   name?: string
   sort_order?: number
-  test_definition_id: number
-  group_id?: number | null
-  account_id?: number | null
-  target_mode?: 'group' | 'all_accounts' | 'account'
+  group_ids: number[]
+  test_definition_ids: number[]
   model_id: string
   reasoning_effort?: string | null
   cron_expression?: string
   enabled?: boolean
   max_results?: number
+  protection?: TestProtectionConfig
 }
 
 export type UpdateTestPlanRequest = Partial<CreateTestPlanRequest>

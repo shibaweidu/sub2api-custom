@@ -169,11 +169,9 @@ export default {
     apiKeys: 'API Keys',
     batchImage: 'Batch Images',
     usage: 'Usage',
-    testResults: 'Channel Tests',
-    tests: 'Channel Test Management',
+    testResults: 'Channel Quality Checks',
+    tests: 'Channel Quality Management',
     redeem: 'Redeem',
-    sharedPool: 'Shared Account Pool',
-    sharedPoolAdmin: 'Shared Pool Management',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',
     affiliateInviteRecords: 'Invite Records',
@@ -222,8 +220,40 @@ export default {
   },
 
   tests: {
+    adminReview: {
+      roundOverrideHint: 'Administrator decisions override ordinary rules for this round. Promotion still requires every required automatic condition to pass. Assigning groups replaces all existing groups; the next round starts fresh.',
+      title: 'Admin decision', markPass: 'Mark as passed', markFail: 'Mark as failed',
+      pass: 'Marked as passed', fail: 'Marked as failed',
+      automaticHold: 'Automatic checks have not passed',
+      loadFailed: 'Failed to load admin reviews', saveFailed: 'Decision not saved. Refresh and try again.',
+    },
+    modelCheck: {
+      pass: 'Consistent', fail: 'Mismatch', unknown: 'Unconfirmed',
+      requestedModel: 'Requested model', upstreamModel: 'Upstream request model', returnedModels: 'Returned model',
+      matchMode: 'Model matching', exact: 'Strict match', snapshot: 'Allow dated snapshot',
+      reasons: {
+        mismatch: 'The returned model field differs from the upstream request model.',
+        missing_model: 'The upstream response did not provide a model field.',
+        missing_upstream_model: 'The actual upstream request model was not available.',
+        upstream_error: 'The upstream request did not complete, so model consistency is unconfirmed.',
+        invalid_evidence: 'The upstream model evidence is invalid; consistency is unconfirmed.',
+      },
+    },
+    voting: {
+      title: 'Quality review', description: 'Review this round’s output and vote. Latest results remain available for accounts paused by quality protection.',
+      paused: 'Paused by quality protection', referenceAnswer: 'Reference answer', pass: 'Pass', fail: 'Fail',
+      closed: 'Voting has closed', canChange: 'Your vote is recorded. You can change it; only one vote counts per round.', oneVote: 'One vote per user per round. You can change your vote.',
+      thresholdHint: 'More than {reject} failed votes fails the check. Passing requires {pass} passed votes and passing automatic checks. Failure takes priority.',
+      loadFailed: 'Unable to load voting results', voteFailed: 'Your vote was not saved. Refresh and try again.',
+    },
+    statisticsSuccessRate: 'Success rate', statisticsCacheRate: 'Cache rate', statisticsFirstToken: 'Average first token',
+    statisticsRequestSamples: '{success} / {total} requests succeeded', statisticsTokenSamples: '{cached} / {input} input tokens cached', statisticsFirstTokenSamples: '{count} timed requests',
+    statisticsWindow: 'Window', statisticsUpdated: 'Updated',
+    statisticsSourceHint: 'Based on recorded requests in the last hour. Cache rate is weighted by input tokens; time to first token is the average of valid timing samples.',
+    statisticsRecentRequests: 'Recent requests', statisticsRecentRequestsHint: 'Last 10 requests, oldest to newest from left to right', statisticsRequestSuccess: 'Succeeded', statisticsRequestFailure: 'Failed',
+    loadMore: 'Load more',
     preview: 'Preview HTML', closePreview: 'Close preview', rawOutput: 'Original response', noOutput: 'No output returned', running: 'Test is running…', loadFailed: 'Unable to load or save test data',
-    title: 'Channel Tests', description: 'View channel test results for your visible groups', empty: 'No channel test results yet', htmlResult: 'HTML channel test result', allTypes: 'All types', groupFilter: 'Group', modelFilter: 'Model', reasoningEffort: 'Reasoning effort', allGroups: 'All groups', allModels: 'All models', noMatches: 'No results match the selected filters', viewHistory: 'View history', historyHint: 'Historical channel test results for this group or account', group: 'Group', account: 'Account', ungrouped: 'Ungrouped', unknownType: 'Unknown test'
+    title: 'Channel Quality Checks', description: 'View quality check results by group and account', empty: 'No channel quality check results yet', htmlResult: 'HTML channel quality check result', allTypes: 'All types', groupFilter: 'Group', modelFilter: 'Model', reasoningEffort: 'Reasoning effort', allGroups: 'All groups', allModels: 'All models', noMatches: 'No results match the selected filters', viewHistory: 'View history', historyHint: 'Historical quality check results for this group or account', group: 'Group', account: 'Account', ungrouped: 'Ungrouped', unknownType: 'Unknown check', groupCheck: 'Group check', latestResult: 'Latest result', previousResult: 'Previous result', completed: 'Completed', awaitingReview: 'Awaiting review'
   },
 
   // Auth

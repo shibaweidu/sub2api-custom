@@ -55,6 +55,7 @@
           :class="[instanceId]"
           :style="dropdownStyle"
           role="listbox"
+          tabindex="-1"
           @click.stop
           @mousedown.stop
           @keydown="onDropdownKeyDown"
@@ -164,6 +165,7 @@ interface Emits {
   (e: 'update:modelValue', value: string | number | boolean | null): void
   (e: 'change', value: string | number | boolean | null, option: SelectOption | null): void
   (e: 'search', query: string): void
+  (e: 'open-change', open: boolean): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -333,6 +335,12 @@ const findPrevEnabledIndex = (startIndex: number): number => {
   return -1
 }
 
+watch(filteredOptions, () => {
+  if (!isOpen.value) return
+  focusedIndex.value = findNextEnabledIndex(0)
+  if (focusedIndex.value >= 0) scrollToFocused()
+})
+
 const handleOptionMouseEnter = (option: any, index: number) => {
   if (isOptionDisabled(option) || isGroupHeaderOption(option)) return
   focusedIndex.value = index
@@ -369,6 +377,7 @@ const toggle = () => {
 }
 
 watch(isOpen, (open) => {
+  emit('open-change', open)
   if (open) {
     calculateDropdownPosition()
     // Reset focused index to current selection or first item
@@ -384,6 +393,8 @@ watch(isOpen, (open) => {
 
     if (isSearchable.value) {
       nextTick(() => searchInputRef.value?.focus())
+    } else {
+      nextTick(() => dropdownRef.value?.focus())
     }
     // Add scroll listener to update position
     window.addEventListener('scroll', updateTriggerRect, { capture: true, passive: true })

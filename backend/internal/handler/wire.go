@@ -51,11 +51,15 @@ func ProvideAdminHandlers(
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	settingService *service.SettingService,
 	openAIGateway *service.OpenAIGatewayService,
+	opencodeGoUsage *service.OpenCodeGoUsageService,
+	claudeResetCredits *service.ClaudeResetCreditService,
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetCodexTicketGateway(openAIGateway)
+	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
+	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,
@@ -134,10 +138,12 @@ func ProvideOpenAIGatewayHandler(
 	grokQuotaService *service.GrokQuotaService,
 	cfg *config.Config,
 	coordinator *securityaudit.Coordinator,
+	compositeResolver *service.CompositeRouteResolver,
 ) *OpenAIGatewayHandler {
 	gatewayService.SetPluginManager(pluginManager)
 	h := NewOpenAIGatewayHandler(gatewayService, concurrencyService, billingCacheService, apiKeyService,
 		usageRecordWorkerPool, errorPassthroughService, contentModerationService, opsService, cfg)
+	h.compositeResolver = compositeResolver
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
 	return h
@@ -172,7 +178,6 @@ func ProvideAdminSettingHandler(settingService *service.SettingService, emailSer
 	h.SetNotificationEmailService(notificationEmailService)
 	h.SetAliyunCaptchaService(aliyunCaptchaService)
 	h.SetStepUpDeps(totpService, userService)
-	h.SetOpenAICodexTicketProxyTester(service.NewOpenAICodexTicketProxyTester(settingService))
 	return h
 }
 
@@ -199,37 +204,32 @@ func ProvideHandlers(
 	modelPlazaHandler *ModelPlazaHandler,
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
-	sharedAccountPoolHandler *SharedAccountPoolHandler,
-	sharedAPIKeyHandler *SharedAPIKeyHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
-	adminHandlers.SharedAccountPool = sharedAccountPoolHandler
 	return &Handlers{
-		Auth:              authHandler,
-		User:              userHandler,
-		APIKey:            apiKeyHandler,
-		Usage:             usageHandler,
-		Redeem:            redeemHandler,
-		Subscription:      subscriptionHandler,
-		Announcement:      announcementHandler,
-		ChannelMonitor:    channelMonitorUserHandler,
-		ChannelMonitorV2:  channelMonitorV2Handler,
-		Admin:             adminHandlers,
-		Gateway:           gatewayHandler,
-		OpenAIGateway:     openaiGatewayHandler,
-		Setting:           settingHandler,
-		Totp:              totpHandler,
-		Passkey:           passkeyHandler,
-		Payment:           paymentHandler,
-		PaymentWebhook:    paymentWebhookHandler,
-		AvailableChannel:  availableChannelHandler,
-		ModelPlaza:        modelPlazaHandler,
-		AsyncImage:        asyncImageHandler,
-		BatchImage:        batchImageHandler,
-		SharedAccountPool: sharedAccountPoolHandler,
-		SharedAPIKey:      sharedAPIKeyHandler,
+		Auth:             authHandler,
+		User:             userHandler,
+		APIKey:           apiKeyHandler,
+		Usage:            usageHandler,
+		Redeem:           redeemHandler,
+		Subscription:     subscriptionHandler,
+		Announcement:     announcementHandler,
+		ChannelMonitor:   channelMonitorUserHandler,
+		ChannelMonitorV2: channelMonitorV2Handler,
+		Admin:            adminHandlers,
+		Gateway:          gatewayHandler,
+		OpenAIGateway:    openaiGatewayHandler,
+		Setting:          settingHandler,
+		Totp:             totpHandler,
+		Passkey:          passkeyHandler,
+		Payment:          paymentHandler,
+		PaymentWebhook:   paymentWebhookHandler,
+		AvailableChannel: availableChannelHandler,
+		ModelPlaza:       modelPlazaHandler,
+		AsyncImage:       asyncImageHandler,
+		BatchImage:       batchImageHandler,
 	}
 }
 
@@ -269,8 +269,6 @@ var ProviderSet = wire.NewSet(
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
 	NewAvailableChannelHandler,
-	NewSharedAccountPoolHandler,
-	NewSharedAPIKeyHandler,
 	NewModelPlazaHandler,
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,

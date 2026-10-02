@@ -16,7 +16,7 @@ import (
 
 func TestCodexTicketInjectMissConcurrentWithRunningProbe(t *testing.T) {
 	upstream := &ticketScheduledUpstream{requests: make(chan ticketScheduledRequest, 1)}
-	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true, Models: []string{"gpt-6-astra"}, HarvestProxyURL: "http://proxy.example:80"}, upstream)
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true, Models: []string{"gpt-6-astra"}}, upstream)
 	account := activeTicketAccounts(7)[0]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() { cancel(); svc.openaiCodexTicketScheduler.workers.Wait() }()
@@ -72,7 +72,8 @@ func TestCodexTicketInjectMissOnlyCountsEligibleOutboundInjection(t *testing.T) 
 			case "non_oauth":
 				account.Type = AccountTypeAPIKey
 			case "valid":
-				svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{Model: model, State: fakeCodexTicketState(292), Length: 292, ExpiresAt: time.Now().Add(time.Hour)})
+				seedCodexTicketCookies(svc, account)
+				svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{Model: model, State: fakeCodexTicketState(292), Length: 292, CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)})
 			case "fail_open":
 				svc.cfg.Gateway.OpenAICodexTicket.FailClosed = false
 			}
@@ -103,11 +104,11 @@ func TestCodexTicketHistoryBoundedOrderedPrivateAndIsolated(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 31; i++ {
 		for _, model := range []string{"gpt-6-astra", "gpt-5.6-sol"} {
-			r.recordProbeEvent(1, model, nil, 200, 292, 292, 1, now, now)
+			r.recordProbeEvent(1, model, nil, 200, 292, 292, 1, "pool", now, now)
 		}
 	}
-	r.recordProbeEvent(2, "gpt-6-astra", &openAICodexTicketProbeError{Code: "private-code", Message: "private-token-response"}, 500, 0, 332, 2, now, now)
-	r.recordProbeEvent(1, "gpt-6-astra", &openAICodexTicketProbeError{Code: "canceled"}, 0, 0, 292, 1, now, now)
+	r.recordProbeEvent(2, "gpt-6-astra", &openAICodexTicketProbeError{Code: "private-code", Message: "private-token-response"}, 500, 0, 332, 2, "pool", now, now)
+	r.recordProbeEvent(1, "gpt-6-astra", &openAICodexTicketProbeError{Code: "canceled"}, 0, 0, 292, 1, "pool", now, now)
 	require.Len(t, r.telemetry[openAICodexTicketKey(1, "gpt-6-astra")].events, 20)
 	all := svc.OpenAICodexTicketHistory(context.Background(), ticketTestAccount(1), "")
 	require.Len(t, all, 20)
@@ -142,15 +143,20 @@ func TestCodexTicketHistoryRecordsSuccessfulProbe(t *testing.T) {
 	upstream := &codexTicketFuncUpstream{do: func(*http.Request) (*http.Response, error) {
 		h := http.Header{}
 		h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
+		addFakeCodexTicketCookies(h)
 		return &http.Response{StatusCode: 200, Header: h, Body: http.NoBody}, nil
 	}}
-	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, HarvestProxyURL: "http://secret:password@proxy.example:80"}, upstream)
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, upstream)
 	account := ticketTestAccount(1)
+	proxyID := int64(9)
+	account.ProxyID = &proxyID
+	account.Proxy = &Proxy{ID: proxyID, Protocol: "http", Host: "proxy.example", Port: 80, Username: "secret", Password: "password"}
 	svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 	events := svc.OpenAICodexTicketHistory(context.Background(), account, "")
 	require.Len(t, events, 1)
 	require.Equal(t, "success", events[0].Outcome)
 	require.Equal(t, 292, events[0].Length)
+	require.Equal(t, "account", events[0].ProxySource)
 	require.GreaterOrEqual(t, events[0].DurationMs, int64(0))
 	statuses := OpenAICodexTicketStatuses(account, svc.openAICodexTicketConfig(), time.Now())
 	svc.EnrichOpenAICodexTicketDiagnostics(account, statuses)
@@ -168,7 +174,7 @@ func TestCodexTicketHistoryRecordsSuccessfulProbe(t *testing.T) {
 
 func TestCodexTicketHistoryCancellationDoesNotCountFailure(t *testing.T) {
 	upstream := &ticketScheduledUpstream{requests: make(chan ticketScheduledRequest, 1)}
-	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, Models: []string{"gpt-6-astra"}, HarvestProxyURL: "http://proxy.example:80"}, upstream)
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, Models: []string{"gpt-6-astra"}}, upstream)
 	account := activeTicketAccounts(1)[0]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

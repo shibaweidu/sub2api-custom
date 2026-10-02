@@ -98,11 +98,8 @@ type Group struct {
 	Description    string  `json:"description"`
 	Platform       string  `json:"platform"`
 	RateMultiplier float64 `json:"rate_multiplier"`
-	// IsSharedPool marks the internal group backing the shared account pool.
-	// Clients use this marker to keep shared groups out of normal API-key forms.
-	IsSharedPool bool   `json:"is_shared_pool"`
-	IsExclusive  bool   `json:"is_exclusive"`
-	Status       string `json:"status"`
+	IsExclusive    bool    `json:"is_exclusive"`
+	Status         string  `json:"status"`
 
 	SubscriptionType          string   `json:"subscription_type"`
 	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
@@ -223,6 +220,7 @@ type Account struct {
 	CredentialsStatus       map[string]bool                         `json:"credentials_status,omitempty"`
 	Extra                   map[string]any                          `json:"extra"`
 	OllamaCloudUsage        *service.OllamaCloudUsageState          `json:"ollama_cloud_usage,omitempty"`
+	OpenCodeGoUsage         *service.OpenCodeGoUsageState           `json:"opencode_go_usage,omitempty"`
 	CodexTicketConfig       *service.OpenAICodexTicketAccountConfig `json:"codex_ticket_config,omitempty"`
 	CodexTurnTickets        []service.OpenAICodexTicketStatus       `json:"codex_turn_tickets,omitempty"`
 	ProxyIDs                []int64                                 `json:"proxy_ids,omitempty"`
@@ -243,7 +241,8 @@ type Account struct {
 	CreatedAt               time.Time                               `json:"created_at"`
 	UpdatedAt               time.Time                               `json:"updated_at"`
 
-	Schedulable bool `json:"schedulable"`
+	Schedulable                bool `json:"schedulable"`
+	UpstreamBillingRateLimited bool `json:"upstream_billing_rate_limited,omitempty"`
 
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`
 	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`
@@ -354,6 +353,7 @@ type AccountListItem struct {
 	OllamaCloudUsage  *service.OllamaCloudUsageState          `json:"ollama_cloud_usage,omitempty"`
 	CodexTicketConfig *service.OpenAICodexTicketAccountConfig `json:"codex_ticket_config,omitempty"`
 	CodexTurnTickets  []service.OpenAICodexTicketStatus       `json:"codex_turn_tickets,omitempty"`
+	OpenCodeGoUsage   *service.OpenCodeGoUsageState           `json:"opencode_go_usage,omitempty"`
 
 	ProxyIDs                []int64    `json:"proxy_ids,omitempty"`
 	ProxyID                 *int64     `json:"proxy_id"`
@@ -371,7 +371,8 @@ type AccountListItem struct {
 	CreatedAt               time.Time  `json:"created_at"`
 	UpdatedAt               time.Time  `json:"updated_at"`
 
-	Schedulable bool `json:"schedulable"`
+	Schedulable                bool `json:"schedulable"`
+	UpstreamBillingRateLimited bool `json:"upstream_billing_rate_limited,omitempty"`
 
 	RateLimitedAt    *time.Time `json:"rate_limited_at"`
 	RateLimitResetAt *time.Time `json:"rate_limit_reset_at"`

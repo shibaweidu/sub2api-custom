@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,26 +13,13 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/robfig/cron/v3"
+	"golang.org/x/net/html"
 )
 
 const scheduledTestDefaultMaxWorkers = 10
 
 var (
-	// Keep the number grammar deliberately strict. In particular, accepting a
-	// number only after an answer marker (or as a standalone line) prevents
-	// table values and step numbers in the model's reasoning from becoming the
-	// recorded answer.
-	scheduledTestNumberPattern      = `[-+]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][-+]?\d+)?`
-	scheduledTestNumberRE           = regexp.MustCompile(scheduledTestNumberPattern)
-	scheduledTestStandaloneNumberRE = regexp.MustCompile(`^` + scheduledTestNumberPattern + `$`)
-	// Keep the marker and number on the same line. Models frequently format
-	// the answer as "最少取出 **29个**"; the markdown emphasis and Chinese unit
-	// must not make the parser fall through to a step number such as "1.".
-	scheduledTestMarkerGap       = "[ \\t*_`~]*"
-	scheduledTestStrongNumberRE  = regexp.MustCompile(`(?i)(?:final\s+(?:answer|result)|answer|result|答案|最终\s*(?:答案|结果)|结论)` + scheduledTestMarkerGap + `(?:(?:is|are|为|是)` + scheduledTestMarkerGap + `)?(?:=|:|：)?` + scheduledTestMarkerGap + `(` + scheduledTestNumberPattern + `)`)
-	scheduledTestMinimumNumberRE = regexp.MustCompile(`(?i)(?:minimum(?:\s+number)?|最少(?:取出)?)` + scheduledTestMarkerGap + `(?:(?:is|are|为|是)` + scheduledTestMarkerGap + `)?(?:=|:|：)?` + scheduledTestMarkerGap + `(` + scheduledTestNumberPattern + `)`)
-	scheduledTestAtLeastNumberRE = regexp.MustCompile(`(?i)至少` + scheduledTestMarkerGap + `(?:(?:is|are|为|是)` + scheduledTestMarkerGap + `)?(?:=|:|：)?` + scheduledTestMarkerGap + `(` + scheduledTestNumberPattern + `)`)
-	scheduledTestAnswerLineRE    = regexp.MustCompile(`(?i)(?:final\s+(?:answer|result)|answer|result|答案|最终|结论|minimum|最少|至少)`)
+	scheduledTestHTMLCandidateRE = regexp.MustCompile(`(?is)<!--|(?:<|\\u003c)\s*([a-z][a-z0-9:._-]*)(?:\s|/?>|\\u003e)`)
 	scheduledTestHTMLRootRE      = regexp.MustCompile(`(?is)<\s*([a-z][a-z0-9:._-]*)(?:\s|/?>)`)
 	scheduledTestHTMLDoctypeRE   = regexp.MustCompile(`(?is)<!doctype\s+html\s*>(?:\s|\\[nrt])*$`)
 	scheduledTestHTMLAttrRE      = regexp.MustCompile(`=\s*\\"`)
@@ -42,7 +28,7 @@ var (
 
 const scheduledTestPersistenceTimeout = 15 * time.Second
 
-var ErrScheduledTestAccountRunning = errors.New("this account is already being tested for this plan")
+var ErrScheduledTestAccountRunning = errors.New("this account and test type are already being tested for this plan")
 var ErrScheduledTestResultNotFailed = errors.New("test result is no longer failed; refresh the results before retrying")
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
@@ -54,22 +40,36 @@ type ScheduledTestRunnerService struct {
 	rateLimitSvc   *RateLimitService
 	cfg            *config.Config
 
-	cron      *cron.Cron
-	startOnce sync.Once
-	stopOnce  sync.Once
-	runMu     sync.Mutex
+	cron                    *cron.Cron
+	startOnce               sync.Once
+	stopOnce                sync.Once
+	runMu                   sync.Mutex
+	lifecycleMu             sync.Mutex
+	lifecycleCtx            context.Context
+	lifecycleCancel         context.CancelFunc
+	stopping                bool
+	activeRuns              sync.WaitGroup
+	executionTimeout        time.Duration
+	automaticRetryBaseDelay time.Duration
 
 	// runningPlans prevents a manual RunNow from racing the cron sweep (and
 	// protects against duplicate scheduler ticks in deployments with more than
 	// one trigger). workerSem is shared by every plan and every account, so a
 	// group plan cannot multiply the configured concurrency by the number of
 	// concurrently running plans.
-	planRunMu       sync.Mutex
-	runningPlans    map[int64]struct{}
-	workerMu        sync.Mutex
-	workerSem       chan struct{}
-	accountRunMu    sync.Mutex
-	runningAccounts map[[2]int64]struct{}
+	planRunMu         sync.Mutex
+	runningPlans      map[int64]struct{}
+	workerMu          sync.Mutex
+	workerSem         chan struct{}
+	statisticsSem     chan struct{}
+	accountRunMu      sync.Mutex
+	runningAccounts   map[[3]int64]struct{}
+	accountExecutions map[int64]*scheduledTestAccountExecution
+}
+
+type scheduledTestAccountExecution struct {
+	sem   chan struct{}
+	users int
 }
 
 // NewScheduledTestRunnerService creates a new runner.
@@ -116,27 +116,74 @@ func (s *ScheduledTestRunnerService) Start() {
 	})
 }
 
-// Stop gracefully shuts down the cron scheduler.
+// Stop cancels cron, manual runs and retries, then allows result persistence
+// to finish before the application closes its database connections.
 func (s *ScheduledTestRunnerService) Stop() {
 	if s == nil {
 		return
 	}
 	s.stopOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.stopping = true
+		if s.lifecycleCancel != nil {
+			s.lifecycleCancel()
+		}
+		s.lifecycleMu.Unlock()
+		cronDone := context.Background()
 		if s.cron != nil {
-			ctx := s.cron.Stop()
-			select {
-			case <-ctx.Done():
-			case <-time.After(3 * time.Second):
-				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] cron stop timed out")
+			cronDone = s.cron.Stop()
+		}
+		done := make(chan struct{})
+		go func() {
+			if s.cron != nil {
+				<-cronDone.Done()
 			}
+			s.activeRuns.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		// Account completion and advancing its plan each have a bounded
+		// persistence context; let both finish before database cleanup.
+		case <-time.After(2*scheduledTestPersistenceTimeout + time.Second):
+			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] shutdown wait timed out")
 		}
 	})
 }
 
+// beginRunContext links work to shutdown without introducing a shared execution
+// deadline. Registration and shutdown use the same mutex so Wait cannot race
+// a new Add after shutdown has begun.
+func (s *ScheduledTestRunnerService) beginRunContext(parent context.Context) (context.Context, func(), error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return nil, nil, context.Canceled
+	}
+	if s.lifecycleCtx == nil {
+		s.lifecycleCtx, s.lifecycleCancel = context.WithCancel(context.Background())
+	}
+	ctx, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(s.lifecycleCtx, cancel)
+	s.activeRuns.Add(1)
+	var once sync.Once
+	return ctx, func() {
+		once.Do(func() {
+			stop()
+			cancel()
+			s.activeRuns.Done()
+		})
+	}, nil
+}
+
 func (s *ScheduledTestRunnerService) runScheduled() {
-	// A slow upstream or a large group can outlive the one-minute cron tick.
-	// Do not start a second sweep against the same due plans while the previous
-	// sweep is still running.
+	ctx, finish, err := s.beginRunContext(context.Background())
+	if err != nil {
+		return
+	}
+	defer finish()
+	// Only discovery is serialized. Long-running rules own their plan lock and
+	// must not stop the next tick from discovering newly due rules.
 	if !s.runMu.TryLock() {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] previous sweep still running; skipping tick")
 		return
@@ -144,13 +191,22 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	defer s.runMu.Unlock()
 
 	// Delay 10s so execution lands at ~:10 of each minute instead of :00.
-	time.Sleep(10 * time.Second)
+	delay := time.NewTimer(10 * time.Second)
+	defer delay.Stop()
+	select {
+	case <-delay.C:
+	case <-ctx.Done():
+		return
+	}
+	s.advanceCacheRecovery(ctx, time.Now().UTC())
+	s.runDuePlans(ctx)
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), scheduledTestExecutionTimeout)
-	defer cancel()
-
+func (s *ScheduledTestRunnerService) runDuePlans(ctx context.Context) {
 	now := time.Now()
-	plans, err := s.planRepo.ListDue(ctx, now)
+	queryCtx, cancel := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+	plans, err := s.planRepo.ListDue(queryCtx, now)
+	cancel()
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)
 		return
@@ -161,49 +217,142 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 
 	logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] found %d due plans", len(plans))
 
-	sem := make(chan struct{}, scheduledTestDefaultMaxWorkers)
-	var wg sync.WaitGroup
-
 	for _, plan := range plans {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(p *ScheduledTestPlan) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			s.runOnePlan(ctx, p)
-		}(plan)
+		if ctx.Err() != nil {
+			return
+		}
+		// Register before launching. Repeated ticks cannot accumulate blocked
+		// goroutines for the same rule, and shutdown waits for admitted work.
+		// The scan context ends when discovery returns; executions instead
+		// inherit cancellation from the runner lifecycle.
+		runCtx, finish, admitted := s.preparePlanRun(context.Background(), plan)
+		if !admitted {
+			continue
+		}
+		go func() {
+			defer finish()
+			s.executePlan(runCtx, plan)
+		}()
 	}
+}
 
-	wg.Wait()
+func (s *ScheduledTestRunnerService) preparePlanRun(ctx context.Context, plan *ScheduledTestPlan) (context.Context, func(), bool) {
+	if plan == nil {
+		return nil, nil, false
+	}
+	ctx, finish, err := s.beginRunContext(ctx)
+	if err != nil {
+		return nil, nil, false
+	}
+	if !s.beginPlanRun(plan.ID) {
+		finish()
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d is already running; skipping overlapping run", plan.ID)
+		return nil, nil, false
+	}
+	return ctx, func() {
+		s.endPlanRun(plan.ID)
+		finish()
+	}, true
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
-	if plan == nil {
+	ctx, finish, admitted := s.preparePlanRun(ctx, plan)
+	if !admitted {
 		return
 	}
-	if !s.beginPlanRun(plan.ID) {
-		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d is already running; skipping overlapping run", plan.ID)
-		return
-	}
-	defer s.endPlanRun(plan.ID)
+	defer finish()
+	s.executePlan(ctx, plan)
+}
 
-	// Resolve the configured test definition before selecting an account. A
-	// disabled/deleted definition is a failed execution and must still advance
-	// next_run_at, otherwise the plan remains due forever and silently retries.
-	prompt, outputKind, definitionErr := s.resolveDefinition(ctx, plan)
+func (s *ScheduledTestRunnerService) executePlan(ctx context.Context, plan *ScheduledTestPlan) {
+	defer s.advancePlan(ctx, plan)
+	if s.scheduledSvc != nil {
+		if repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestRunRepository); ok {
+			s.executePlanSnapshot(ctx, plan, repo)
+			return
+		}
+	}
+	if plan.Protection.Enabled && s.scheduledSvc != nil {
+		if repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestActionRoundRepository); ok {
+			queryCtx, cancel := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+			err := repo.BeginProtectionRun(queryCtx, plan, time.Now().UTC())
+			cancel()
+			if err != nil {
+				logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d protection round initialization error: %v", plan.ID, err)
+				return
+			}
+		}
+	}
+	executions := scheduledTestExecutionPlans(plan)
+	// Local statistics must not wait behind a potentially fifteen-minute model
+	// generation. Display ordering remains a separate definition setting.
+	var local, upstream []*ScheduledTestPlan
+	for _, execution := range executions {
+		queryCtx, cancel := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+		_, kind, err := s.resolveDefinition(queryCtx, execution)
+		cancel()
+		if err == nil && kind == "statistics" {
+			local = append(local, execution)
+		} else {
+			upstream = append(upstream, execution)
+		}
+	}
+
+	// Each definition has an independent result stream. A disabled definition
+	// must not prevent the remaining checks in the same rule from executing.
+	for _, execution := range append(local, upstream...) {
+		s.runPlanDefinition(ctx, execution)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+}
+
+func scheduledTestExecutionPlans(plan *ScheduledTestPlan) []*ScheduledTestPlan {
+	ids := plan.TestDefinitionIDs
+	if len(ids) == 0 {
+		return []*ScheduledTestPlan{plan}
+	}
+	result := make([]*ScheduledTestPlan, 0, len(ids))
+	for _, id := range ids {
+		execution := *plan
+		execution.TestDefinitionID = &id
+		execution.TestDefinitionIDs = []int64{id}
+		result = append(result, &execution)
+	}
+	return result
+}
+
+func (s *ScheduledTestRunnerService) runPlanDefinition(ctx context.Context, plan *ScheduledTestPlan) {
+	if ctx.Err() != nil {
+		return
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+	prompt, outputKind, definitionErr := s.resolveDefinition(queryCtx, plan)
 	if definitionErr != nil {
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
 		s.savePlanFailure(ctx, plan, "text", definitionErr)
-		s.advancePlan(ctx, plan)
+		return
+	}
+	if outputKind == "statistics" {
+		cancel()
+		s.runStatisticsDefinition(ctx, plan)
 		return
 	}
 
-	accountIDs, resolveErr := s.resolveTargetAccounts(ctx, plan)
+	accountIDs, resolveErr := s.resolveTargetAccounts(queryCtx, plan)
+	cancel()
+	if ctx.Err() != nil {
+		return
+	}
 	if resolveErr != nil || len(accountIDs) == 0 {
 		if resolveErr == nil {
 			resolveErr = fmt.Errorf("no schedulable account is available for this group")
 		}
 		s.savePlanFailure(ctx, plan, outputKind, resolveErr)
-		s.advancePlan(ctx, plan)
 		return
 	}
 
@@ -212,9 +361,17 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 	// failing upstream and users only see results for their entitled group.
 	sem := make(chan struct{}, scheduledTestDefaultMaxWorkers)
 	var wg sync.WaitGroup
+dispatchAccounts:
 	for _, accountID := range accountIDs {
+		if ctx.Err() != nil {
+			break
+		}
 		accountID := accountID
-		sem <- struct{}{}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break dispatchAccounts
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -223,7 +380,6 @@ func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *Sched
 		}()
 	}
 	wg.Wait()
-	s.advancePlan(ctx, plan)
 }
 
 func (s *ScheduledTestRunnerService) resolveDefinition(ctx context.Context, plan *ScheduledTestPlan) (string, string, error) {
@@ -246,10 +402,24 @@ func (s *ScheduledTestRunnerService) resolveDefinition(ctx context.Context, plan
 	if outputKind == "" {
 		outputKind = "text"
 	}
+	if outputKind == "model_check" {
+		return scheduledTestModelCheckPrompt, outputKind, nil
+	}
 	return d.Prompt, outputKind, nil
 }
 
 func (s *ScheduledTestRunnerService) resolveTargetAccounts(ctx context.Context, plan *ScheduledTestPlan) ([]int64, error) {
+	if s.scheduledSvc != nil {
+		if repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestTargetAccountRepository); ok {
+			return repo.ListPlanTargetAccountIDs(ctx, plan, plan.AccountID)
+		}
+		if repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestActionRepository); ok {
+			return repo.ListPlanDetectionAccountIDs(ctx, plan, plan.AccountID)
+		}
+	}
+	if repo := s.scheduledSvc.protectionRepository(); repo != nil {
+		return repo.ListDetectionAccountIDs(ctx, plan.GroupID, plan.AccountID)
+	}
 	if plan.AccountID != nil && *plan.AccountID > 0 {
 		return []int64{*plan.AccountID}, nil
 	}
@@ -273,19 +443,70 @@ func (s *ScheduledTestRunnerService) resolveTargetAccounts(ctx context.Context, 
 }
 
 func (s *ScheduledTestRunnerService) runOneAccount(ctx context.Context, plan *ScheduledTestPlan, accountID int64, prompt, outputKind string) {
-	if !s.beginAccountRun(plan.ID, accountID) {
+	if ctx.Err() != nil {
+		return
+	}
+	if !s.beginAccountRun(plan.ID, accountID, plan.TestDefinitionID) {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d is already running; skipping overlapping run", plan.ID, accountID)
 		return
 	}
-	defer s.endAccountRun(plan.ID, accountID)
+	defer s.endAccountRun(plan.ID, accountID, plan.TestDefinitionID)
 
 	persistCtx, cancel := scheduledTestPersistenceContext()
+	eligible, eligibleErr := s.detectionAccountEligible(persistCtx, plan, accountID)
+	if eligibleErr != nil || !eligible {
+		cancel()
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d skipped: account unavailable for detection (%v)", plan.ID, accountID, eligibleErr)
+		s.saveSkippedAccountResult(ctx, plan, accountID, outputKind, eligibleErr)
+		return
+	}
 	pending, err := s.startAccountResult(persistCtx, plan, accountID, outputKind)
+	if err == nil {
+		err = s.beginResultProtection(persistCtx, plan, pending)
+	}
 	cancel()
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d StartResult error: %v", plan.ID, accountID, err)
+		if plan.ProtectionRule(plan.TestDefinitionID) != nil {
+			if pending != nil {
+				pending.Status, pending.ErrorMessage = "failed", "unable to initialize test protection"
+				cleanupCtx, cleanupCancel := scheduledTestPersistenceContext()
+				_ = s.scheduledSvc.CompleteResult(cleanupCtx, plan.MaxResults, pending)
+				cleanupCancel()
+			}
+			return
+		}
 	}
 	s.runAccountWithResult(ctx, plan, accountID, prompt, outputKind, pending)
+}
+
+func (s *ScheduledTestRunnerService) saveSkippedAccountResult(ctx context.Context, plan *ScheduledTestPlan, accountID int64, outputKind string, cause error) {
+	if s.scheduledSvc == nil {
+		return
+	}
+	now := time.Now()
+	result := &ScheduledTestResult{
+		PlanID: plan.ID, TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode,
+		OutputKind: outputKind, AccountID: &accountID, ModelID: plan.ModelID,
+		ReasoningEffort: plan.ReasoningEffort, GroupID: plan.GroupID, Status: "running",
+		StartedAt: now, FinishedAt: now,
+	}
+	persistCtx, cancel := scheduledTestPersistenceContext()
+	defer cancel()
+	created, err := s.scheduledSvc.StartResult(persistCtx, plan.ID, result)
+	if err != nil || created == nil {
+		return
+	}
+	created.Status = "failed"
+	created.ErrorMessage = "检测跳过：账号未开启调度或当前状态不可检测"
+	if cause != nil {
+		created.ErrorMessage += ": " + cause.Error()
+	}
+	created.FinishedAt = time.Now()
+	created.LatencyMs = created.FinishedAt.Sub(created.StartedAt).Milliseconds()
+	if err := s.scheduledSvc.CompleteResult(persistCtx, plan.MaxResults, created); err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d skipped result error: %v", plan.ID, accountID, err)
+	}
 }
 
 func (s *ScheduledTestRunnerService) startAccountResult(ctx context.Context, plan *ScheduledTestPlan, accountID int64, outputKind string) (*ScheduledTestResult, error) {
@@ -297,47 +518,78 @@ func (s *ScheduledTestRunnerService) startAccountResult(ctx context.Context, pla
 	// long-running test visible immediately and lets completion update the same
 	// row instead of briefly showing no result (or creating duplicate history).
 	pending := &ScheduledTestResult{
-		Status:          "running",
-		OutputKind:      outputKind,
-		AccountID:       &accountID,
-		ModelID:         plan.ModelID,
-		ReasoningEffort: plan.ReasoningEffort,
-		GroupID:         plan.GroupID,
-		StartedAt:       started,
-		FinishedAt:      started,
+		TestDefinitionID: plan.TestDefinitionID,
+		TargetMode:       plan.TargetMode,
+		Status:           "running",
+		OutputKind:       outputKind,
+		AccountID:        &accountID,
+		ModelID:          plan.ModelID,
+		ReasoningEffort:  plan.ReasoningEffort,
+		GroupID:          plan.GroupID,
+		StartedAt:        started,
+		FinishedAt:       started,
 	}
 	return s.scheduledSvc.StartResult(ctx, plan.ID, pending)
 }
 
 func (s *ScheduledTestRunnerService) runAccountWithResult(ctx context.Context, plan *ScheduledTestPlan, accountID int64, prompt, outputKind string, pending *ScheduledTestResult) {
+	if outputKind == "statistics" {
+		s.runStatisticsResult(ctx, plan, &accountID, pending, time.Now().UTC())
+		return
+	}
+	if release, acquired := s.acquireAccountExecution(ctx, accountID); acquired {
+		defer release()
+	}
 	started := time.Now()
 	if pending != nil {
 		started = pending.StartedAt
 	}
-	var result *ScheduledTestResult
-	var err error
-	if !s.acquireWorker(ctx) {
-		err = ctx.Err()
-		if err == nil {
-			err = context.Canceled
+	result := s.runWithAutomaticRetries(ctx, plan, &accountID, func(attemptCtx context.Context) *ScheduledTestResult {
+		if !s.acquireWorker(attemptCtx) {
+			return scheduledTestFailedAttempt(started, attemptCtx.Err())
 		}
-	} else {
+		// Release the worker before retry backoff so other accounts can run.
+		defer s.releaseWorker()
+		timeout := s.executionTimeout
+		if timeout <= 0 {
+			timeout = scheduledTestExecutionTimeout
+		}
+		// Each attempt starts a fresh budget after obtaining a worker; a
+		// previous attempt's deadline must not poison a retry or later type.
+		executionCtx, cancel := context.WithTimeout(attemptCtx, timeout)
+		defer cancel()
+		attemptStarted := time.Now()
+		checkCtx, checkCancel := context.WithTimeout(executionCtx, scheduledTestPersistenceTimeout)
+		eligible, err := s.runAccountEligible(checkCtx, plan, pending, accountID)
+		checkCancel()
+		if err != nil {
+			return scheduledTestFailedAttempt(attemptStarted, err)
+		}
+		if !eligible {
+			return scheduledTestFailedAttempt(attemptStarted, fmt.Errorf("account is no longer enabled for detection"))
+		}
 		if s.accountTestSvc == nil {
-			err = fmt.Errorf("account test service unavailable")
-		} else {
-			result, err = s.accountTestSvc.RunTestBackgroundWithPromptAndReasoning(ctx, accountID, plan.ModelID, prompt, plan.ReasoningEffort)
+			return scheduledTestFailedAttempt(attemptStarted, fmt.Errorf("account test service unavailable"))
 		}
-		s.releaseWorker()
-	}
-	if err != nil {
-		result = &ScheduledTestResult{Status: "failed", ErrorMessage: err.Error(), StartedAt: started, FinishedAt: time.Now(), LatencyMs: time.Since(started).Milliseconds()}
-	}
-	if result == nil {
-		result = &ScheduledTestResult{Status: "failed", ErrorMessage: "account test returned no result", StartedAt: started, FinishedAt: time.Now(), LatencyMs: time.Since(started).Milliseconds()}
-	}
+		result, err := s.accountTestSvc.RunTestBackgroundWithPromptAndReasoning(executionCtx, accountID, plan.ModelID, prompt, plan.ReasoningEffort)
+		if deadlineErr := executionCtx.Err(); deadlineErr != nil {
+			return scheduledTestFailedAttempt(attemptStarted, deadlineErr)
+		}
+		if err != nil {
+			return scheduledTestFailedAttempt(attemptStarted, err)
+		}
+		if result == nil {
+			return scheduledTestFailedAttempt(attemptStarted, fmt.Errorf("account test returned no result"))
+		}
+		// Background tests encode upstream errors in Status, often with a nil
+		// Go error. Output validation can also turn a response into a failure.
+		s.applyOutputContract(result, outputKind)
+		return result
+	})
 	result.AccountID = &accountID
 	result.PlanID = plan.ID
 	if pending != nil {
+		result.RunID = pending.RunID
 		result.ID = pending.ID
 		result.StartedAt = pending.StartedAt
 		result.CreatedAt = pending.CreatedAt
@@ -345,8 +597,12 @@ func (s *ScheduledTestRunnerService) runAccountWithResult(ctx context.Context, p
 	result.ModelID = plan.ModelID
 	result.ReasoningEffort = plan.ReasoningEffort
 	result.GroupID = plan.GroupID
+	result.TestDefinitionID = plan.TestDefinitionID
+	result.TargetMode = plan.TargetMode
 	result.OutputKind = outputKind
-	s.applyOutputContract(result, outputKind)
+	if outputKind == "model_check" {
+		applyScheduledTestModelCheck(result, plan)
+	}
 	persistCtx, cancel := scheduledTestPersistenceContext()
 	defer cancel()
 	if s.scheduledSvc == nil {
@@ -356,12 +612,25 @@ func (s *ScheduledTestRunnerService) runAccountWithResult(ctx context.Context, p
 	if pending != nil && pending.ID > 0 {
 		if err := s.scheduledSvc.CompleteResult(persistCtx, plan.MaxResults, result); err != nil {
 			logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d CompleteResult error: %v", plan.ID, accountID, err)
+			return
 		}
 	} else if err := s.scheduledSvc.SaveResult(persistCtx, plan.ID, plan.MaxResults, result); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d SaveResult error: %v", plan.ID, accountID, err)
+		return
 	}
-	if result.Status == "success" && plan.AutoRecover {
-		s.tryRecoverAccount(ctx, accountID, plan.ID)
+	// Shutdown/cancellation is not an account-quality observation.
+	if ctx.Err() == nil {
+		s.completeResultProtection(persistCtx, plan, result)
+	}
+	modelCheckPassed := outputKind != "model_check" || (result.OutputModelCheck != nil && result.OutputModelCheck.Verdict == "pass")
+	if result.Status == "success" && modelCheckPassed && plan.AutoRecover && !plan.Protection.Enabled {
+		recoveryCtx, cancelRecovery := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+		// A configuration edit while the upstream was answering invalidates
+		// automatic recovery just as it invalidates protection actions.
+		if eligible, err := s.runAccountEligible(recoveryCtx, plan, result, accountID); err == nil && eligible {
+			s.tryRecoverAccount(recoveryCtx, accountID, plan.ID)
+		}
+		cancelRecovery()
 	}
 }
 
@@ -377,7 +646,7 @@ func (s *ScheduledTestRunnerService) savePlanFailure(ctx context.Context, plan *
 	if cause != nil {
 		errorMessage = cause.Error()
 	}
-	result := &ScheduledTestResult{Status: "running", OutputKind: outputKind, GroupID: plan.GroupID, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, StartedAt: now, FinishedAt: now}
+	result := &ScheduledTestResult{Status: "running", TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode, OutputKind: outputKind, GroupID: plan.GroupID, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, StartedAt: now, FinishedAt: now}
 	persistCtx, cancel := scheduledTestPersistenceContext()
 	defer cancel()
 	created, err := s.scheduledSvc.StartResult(persistCtx, plan.ID, result)
@@ -428,6 +697,7 @@ func (s *ScheduledTestRunnerService) applyOutputContract(result *ScheduledTestRe
 		}
 		result.OutputHTML = html
 	case "number":
+		result.OutputNumeric = nil
 		if n, ok := extractScheduledTestNumber(result.ResponseText); ok {
 			result.OutputNumeric = &n
 			return
@@ -442,63 +712,108 @@ func (s *ScheduledTestRunnerService) applyOutputContract(result *ScheduledTestRe
 }
 
 func extractScheduledTestHTML(text string) string {
-	// Some upstreams include tool-call transcripts in their text response. The
-	// document can then be inside a JSON command string. Decode that string
-	// once, without executing the command or unescaping ordinary HTML/scripts.
-	if root := scheduledTestHTMLRootRE.FindStringIndex(text); root != nil {
-		for i := root[0] - 1; i >= 0; i-- {
-			if text[i] != '"' {
-				continue
-			}
-			backslashes := 0
-			for j := i - 1; j >= 0 && text[j] == '\\'; j-- {
-				backslashes++
-			}
-			if backslashes%2 != 0 {
-				continue
-			}
-			var decoded string
-			if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&decoded); err == nil {
-				if html := extractScheduledTestHTMLDocument(decoded); html != "" {
-					return html
-				}
-			}
-			break
-		}
-	}
-	html := extractScheduledTestHTMLDocument(text)
-	return decodeScheduledTestEscapedHTML(html)
+	return selectScheduledTestHTMLDocument(text, true)
 }
 
 func extractScheduledTestHTMLDocument(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	trimmed = unwrapScheduledTestMarkdownFence(trimmed)
-	root := scheduledTestHTMLRootRE.FindStringSubmatchIndex(trimmed)
-	if len(root) < 4 {
-		// Plain text (including a model's explanatory sentence) is not an HTML
-		// result. The output contract must fail closed instead of displaying it
-		// as if it were a document.
-		return ""
-	}
-	start := root[0]
-	rootName := strings.ToLower(trimmed[root[2]:root[3]])
-	end := scheduledTestHTMLRootEnd(trimmed, start, rootName)
-	if end <= start {
-		return ""
-	}
+	return selectScheduledTestHTMLDocument(text, false)
+}
 
-	// Keep a doctype when the model emitted one immediately before the root,
-	// while dropping prose such as "Here is the HTML:" before it.
-	prefix := strings.TrimSpace(trimmed[:start])
-	if prefix != "" {
-		if loc := scheduledTestHTMLDoctypeRE.FindStringIndex(prefix); loc != nil {
-			start = loc[0]
+// A transcript may contain an initial placeholder followed by a revised
+// document. Choose the last complete outer HTML/SVG, not the first placeholder
+// or a nested element. Smaller explanatory fragments cannot replace a document.
+func selectScheduledTestHTMLDocument(text string, decodeJSON bool) string {
+	// Fences are transcript delimiters, not the end of the response: a later
+	// revision may follow the first code block as raw HTML or a JSON command.
+	text = strings.TrimSpace(text)
+	selected, rank := "", -1
+	selectDocument := func(document string) {
+		root := scheduledTestHTMLRootRE.FindStringSubmatch(document)
+		if len(root) < 2 {
+			return
+		}
+		candidateRank := 1
+		switch strings.ToLower(root[1]) {
+		case "html", "svg":
+			candidateRank = 2
+		case "script", "style", "title", "textarea":
+			candidateRank = 0
+		}
+		if candidateRank >= rank {
+			selected, rank = document, candidateRank
 		}
 	}
-	return strings.TrimSpace(trimmed[start:end])
+	for cursor := 0; cursor < len(text); {
+		root := scheduledTestHTMLCandidateRE.FindStringSubmatchIndex(text[cursor:])
+		if root == nil {
+			break
+		}
+		start := cursor + root[0]
+		if decodeJSON {
+			// Decode before skipping a comment: it may be the first markup in
+			// a JSON command, whose opening quote precedes the comment.
+			// Never execute the command or unescape ordinary HTML/JavaScript.
+			if decoded, end, ok := scheduledTestHTMLJSONString(text, cursor, start); ok {
+				selectDocument(extractScheduledTestHTMLDocument(decoded))
+				cursor = end
+				continue
+			}
+		}
+		if root[2] < 0 { // Comment contents are not document candidates.
+			end := strings.Index(text[start+4:], "-->")
+			if end < 0 {
+				break
+			}
+			cursor = start + 4 + end + 3
+			continue
+		}
+		if text[start] != '<' {
+			cursor += root[1]
+			continue
+		}
+		rootName := strings.ToLower(text[cursor+root[2] : cursor+root[3]])
+		end := scheduledTestHTMLRootEnd(text, start, rootName)
+		if end <= start {
+			// Do not select a complete child of a truncated final document.
+			break
+		}
+		prefix := strings.TrimRight(text[cursor:start], " \t\r\n")
+		if loc := scheduledTestHTMLDoctypeRE.FindStringIndex(prefix); loc != nil {
+			start = cursor + loc[0]
+		}
+		document := strings.TrimSpace(text[start:end])
+		if decodeJSON {
+			document = decodeScheduledTestEscapedHTML(document)
+		}
+		selectDocument(document)
+		cursor = end
+	}
+	return selected
+}
+
+func scheduledTestHTMLJSONString(text string, from, root int) (string, int, bool) {
+	for i := root - 1; i >= from; i-- {
+		if text[i] != '"' {
+			continue
+		}
+		backslashes := 0
+		for j := i - 1; j >= from && text[j] == '\\'; j-- {
+			backslashes++
+		}
+		if backslashes%2 != 0 {
+			continue
+		}
+		var decoded string
+		decoder := json.NewDecoder(strings.NewReader(text[i:]))
+		if err := decoder.Decode(&decoded); err == nil {
+			end := i + int(decoder.InputOffset())
+			if end > root {
+				return decoded, end, true
+			}
+		}
+		break
+	}
+	return "", 0, false
 }
 
 // Older results may contain only the escaped document, without its enclosing
@@ -523,88 +838,40 @@ func decodeScheduledTestEscapedHTML(html string) string {
 	return html
 }
 
-func unwrapScheduledTestMarkdownFence(text string) string {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "```") {
-		return text
-	}
-	lineEnd := strings.IndexByte(text, '\n')
-	if lineEnd < 0 {
-		return ""
-	}
-	header := strings.TrimSpace(text[3:lineEnd])
-	if header != "" && !strings.EqualFold(header, "html") && !strings.EqualFold(header, "svg") {
-		return text
-	}
-	body := text[lineEnd+1:]
-	if close := strings.LastIndex(body, "```"); close >= 0 {
-		body = body[:close]
-	}
-	return strings.TrimSpace(body)
-}
-
 // scheduledTestHTMLRootEnd returns the end offset of the first complete root
-// element. It intentionally performs a small, quote-aware tag scan instead of
-// taking everything after the opening tag, so a model's trailing explanation
-// never leaks into the rendered result. It accepts normal HTML/SVG and custom
-// element names, which keeps future output definitions extensible.
+// element. Tokenizing preserves byte offsets while treating comments and
+// script/style contents as text, so embedded markup cannot truncate a document.
 func scheduledTestHTMLRootEnd(text string, start int, rootName string) int {
 	depth := 0
-	for i := start; i < len(text); {
-		open := strings.IndexByte(text[i:], '<')
-		if open < 0 {
+	end := start
+	tokens := html.NewTokenizer(strings.NewReader(text[start:]))
+	for {
+		kind := tokens.Next()
+		end += len(tokens.Raw())
+		if kind == html.ErrorToken {
 			return 0
 		}
-		i += open
-		if strings.HasPrefix(text[i:], "<!--") {
-			if close := strings.Index(text[i+4:], "-->"); close >= 0 {
-				i += close + 7
-				continue
-			}
-			return 0
-		}
-		end := scheduledTestTagEnd(text, i+1)
-		if end < 0 {
-			return 0
-		}
-		inside := strings.TrimSpace(text[i+1 : end])
-		if inside == "" || strings.HasPrefix(inside, "!") || strings.HasPrefix(inside, "?") {
-			i = end + 1
+		if kind != html.StartTagToken && kind != html.EndTagToken && kind != html.SelfClosingTagToken {
 			continue
 		}
-		closing := strings.HasPrefix(inside, "/")
-		if closing {
-			inside = strings.TrimSpace(strings.TrimPrefix(inside, "/"))
-		}
-		nameEnd := 0
-		for nameEnd < len(inside) {
-			c := inside[nameEnd]
-			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ':' || c == '.' || c == '_' || c == '-' {
-				nameEnd++
-				continue
-			}
-			break
-		}
-		name := strings.ToLower(inside[:nameEnd])
-		if name != rootName {
-			i = end + 1
+		name, _ := tokens.TagName()
+		if string(name) != rootName {
 			continue
 		}
-		if closing {
+		switch kind {
+		case html.EndTagToken:
 			depth--
 			if depth == 0 {
-				return end + 1
+				return end
 			}
-		} else if strings.HasSuffix(strings.TrimSpace(inside), "/") {
+		case html.SelfClosingTagToken:
 			if depth == 0 {
-				return end + 1
+				return end
 			}
-		} else {
+		case html.StartTagToken:
 			depth++
 		}
-		i = end + 1
 	}
-	return 0
 }
 
 func scheduledTestTagEnd(text string, start int) int {
@@ -628,54 +895,6 @@ func scheduledTestTagEnd(text string, start int) int {
 	return -1
 }
 
-func extractScheduledTestNumber(text string) (float64, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return 0, false
-	}
-	// A bare numeric response is unambiguous, including decimals, signs and
-	// scientific notation.
-	if scheduledTestStandaloneNumberRE.MatchString(trimmed) {
-		if n, err := strconv.ParseFloat(trimmed, 64); err == nil {
-			return n, true
-		}
-	}
-
-	// Prefer an explicit final-answer marker. A later phrase such as
-	// "至少 1 个" often appears in the proof and must not overwrite the
-	// actual answer "最少取出 29 个".
-	for _, markerRE := range []*regexp.Regexp{scheduledTestStrongNumberRE, scheduledTestMinimumNumberRE, scheduledTestAtLeastNumberRE} {
-		matches := markerRE.FindAllStringSubmatch(trimmed, -1)
-		for i := len(matches) - 1; i >= 0; i-- {
-			if len(matches[i]) > 1 {
-				if n, err := strconv.ParseFloat(matches[i][1], 64); err == nil {
-					return n, true
-				}
-			}
-		}
-	}
-
-	// A final non-empty line may contain an answer marker that was not matched
-	// above because the model used punctuation or markdown formatting. Search
-	// lines from the end but still require exactly one numeric token and a
-	// marker-like word; this avoids returning an unrelated line number.
-	lines := strings.Split(trimmed, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(strings.Trim(lines[i], "`*_ \\t"))
-		if line == "" || !scheduledTestAnswerLineRE.MatchString(line) {
-			continue
-		}
-		matches := scheduledTestNumberRE.FindAllString(line, -1)
-		if len(matches) != 1 {
-			continue
-		}
-		if n, err := strconv.ParseFloat(matches[0], 64); err == nil {
-			return n, true
-		}
-	}
-	return 0, false
-}
-
 func (s *ScheduledTestRunnerService) RunPlanNow(ctx context.Context, plan *ScheduledTestPlan) {
 	s.runOnePlan(ctx, plan)
 }
@@ -691,14 +910,44 @@ func (s *ScheduledTestRunnerService) RetryAccount(ctx context.Context, plan *Sch
 	if previous.Status != "failed" {
 		return nil, ErrScheduledTestResultNotFailed
 	}
-	accountID := *previous.AccountID
-	if !s.beginAccountRun(plan.ID, accountID) {
-		return nil, ErrScheduledTestAccountRunning
+	bg, finish, err := s.beginRunContext(context.Background())
+	if err != nil {
+		return nil, err
 	}
+	// Validation still respects the HTTP caller, but shutdown must also
+	// interrupt it before this request can enqueue a new background retry.
+	validationCtx, cancelValidation := context.WithTimeout(ctx, scheduledTestPersistenceTimeout)
+	stopValidation := context.AfterFunc(bg, cancelValidation)
+	defer func() {
+		stopValidation()
+		cancelValidation()
+	}()
+	ctx = validationCtx
 	queued := false
 	defer func() {
 		if !queued {
-			s.endAccountRun(plan.ID, accountID)
+			finish()
+		}
+	}()
+	// Retry the failed execution's type and target snapshot, even when its
+	// parent rule has subsequently been edited to select different checks.
+	execution := *plan
+	execution.TestDefinitionID = previous.TestDefinitionID
+	execution.TestDefinitionIDs = nil
+	if previous.TargetMode != "" {
+		execution.TargetMode = previous.TargetMode
+		execution.GroupID = previous.GroupID
+		execution.ModelID = previous.ModelID
+		execution.ReasoningEffort = previous.ReasoningEffort
+	}
+	plan = &execution
+	accountID := *previous.AccountID
+	if !s.beginAccountRun(plan.ID, accountID, plan.TestDefinitionID) {
+		return nil, ErrScheduledTestAccountRunning
+	}
+	defer func() {
+		if !queued {
+			s.endAccountRun(plan.ID, accountID, plan.TestDefinitionID)
 		}
 	}()
 	if plan.AccountID != nil && *plan.AccountID != accountID {
@@ -714,7 +963,14 @@ func (s *ScheduledTestRunnerService) RetryAccount(ctx context.Context, plan *Sch
 	if account == nil {
 		return nil, fmt.Errorf("test account unavailable")
 	}
-	if plan.GroupID != nil {
+	if eligible, err := s.runAccountEligible(ctx, plan, previous, accountID); err != nil || !eligible {
+		return nil, fmt.Errorf("account is not enabled for detection")
+	}
+	followsMoves := false
+	if s.scheduledSvc != nil {
+		_, followsMoves = s.scheduledSvc.resultRepo.(ScheduledTestActionRepository)
+	}
+	if plan.GroupID != nil && !followsMoves {
 		linked := false
 		for _, groupID := range account.GroupIDs {
 			if groupID == *plan.GroupID {
@@ -730,12 +986,16 @@ func (s *ScheduledTestRunnerService) RetryAccount(ctx context.Context, plan *Sch
 	if err != nil {
 		return nil, err
 	}
+	if outputKind == "statistics" {
+		plan.ReasoningEffort = ""
+	}
 	if s.scheduledSvc == nil {
 		return nil, fmt.Errorf("scheduled test service unavailable")
 	}
 	started := time.Now()
 	pending := &ScheduledTestResult{
-		ID: previous.ID, PlanID: plan.ID, CreatedAt: previous.CreatedAt,
+		ID: previous.ID, RunID: previous.RunID, PlanID: plan.ID, CreatedAt: previous.CreatedAt,
+		TestDefinitionID: previous.TestDefinitionID, TargetMode: plan.TargetMode,
 		Status: "running", OutputKind: outputKind, AccountID: &accountID,
 		ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, GroupID: plan.GroupID,
 		StartedAt: started, FinishedAt: started,
@@ -743,14 +1003,20 @@ func (s *ScheduledTestRunnerService) RetryAccount(ctx context.Context, plan *Sch
 	if err := s.scheduledSvc.RestartFailedResult(ctx, pending); err != nil {
 		return nil, err
 	}
+	if err := s.beginResultProtection(ctx, plan, pending); err != nil {
+		pending.Status, pending.ErrorMessage = "failed", "unable to initialize test protection"
+		cleanupCtx, cleanupCancel := scheduledTestPersistenceContext()
+		_ = s.scheduledSvc.CompleteResult(cleanupCtx, plan.MaxResults, pending)
+		cleanupCancel()
+		return nil, err
+	}
 	// Return an immutable snapshot to the HTTP handler while the background
 	// worker updates the stored row independently of the request lifecycle.
 	response := *pending
-	bg, cancel := context.WithTimeout(context.Background(), scheduledTestExecutionTimeout)
 	queued = true
 	go func() {
-		defer cancel()
-		defer s.endAccountRun(plan.ID, accountID)
+		defer finish()
+		defer s.endAccountRun(plan.ID, accountID, plan.TestDefinitionID)
 		s.runAccountWithResult(bg, plan, accountID, prompt, outputKind, pending)
 	}()
 	return &response, nil
@@ -779,13 +1045,22 @@ func (s *ScheduledTestRunnerService) endPlanRun(planID int64) {
 	delete(s.runningPlans, planID)
 }
 
-func (s *ScheduledTestRunnerService) beginAccountRun(planID, accountID int64) bool {
+// A retry suppresses duplicate executions of its check, never another type.
+func scheduledTestAccountRunKey(planID, accountID int64, definitionID *int64) [3]int64 {
+	key := [3]int64{planID, accountID, 0}
+	if definitionID != nil {
+		key[2] = *definitionID
+	}
+	return key
+}
+
+func (s *ScheduledTestRunnerService) beginAccountRun(planID, accountID int64, definitionID *int64) bool {
 	s.accountRunMu.Lock()
 	defer s.accountRunMu.Unlock()
 	if s.runningAccounts == nil {
-		s.runningAccounts = make(map[[2]int64]struct{})
+		s.runningAccounts = make(map[[3]int64]struct{})
 	}
-	key := [2]int64{planID, accountID}
+	key := scheduledTestAccountRunKey(planID, accountID, definitionID)
 	if _, running := s.runningAccounts[key]; running {
 		return false
 	}
@@ -793,13 +1068,59 @@ func (s *ScheduledTestRunnerService) beginAccountRun(planID, accountID int64) bo
 	return true
 }
 
-func (s *ScheduledTestRunnerService) endAccountRun(planID, accountID int64) {
+func (s *ScheduledTestRunnerService) endAccountRun(planID, accountID int64, definitionID *int64) {
 	s.accountRunMu.Lock()
 	defer s.accountRunMu.Unlock()
-	delete(s.runningAccounts, [2]int64{planID, accountID})
+	delete(s.runningAccounts, scheduledTestAccountRunKey(planID, accountID, definitionID))
+}
+
+// Full rounds already queue each account's definitions in order. Retries and
+// other strategies share this gate, so they wait for that account's current
+// check through persistence and reconciliation without skipping another type.
+func (s *ScheduledTestRunnerService) acquireAccountExecution(ctx context.Context, accountID int64) (func(), bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
+	s.accountRunMu.Lock()
+	if s.accountExecutions == nil {
+		s.accountExecutions = make(map[int64]*scheduledTestAccountExecution)
+	}
+	execution := s.accountExecutions[accountID]
+	if execution == nil {
+		execution = &scheduledTestAccountExecution{sem: make(chan struct{}, 1)}
+		s.accountExecutions[accountID] = execution
+	}
+	execution.users++
+	s.accountRunMu.Unlock()
+	releaseReference := func() {
+		s.accountRunMu.Lock()
+		defer s.accountRunMu.Unlock()
+		execution.users--
+		if execution.users == 0 {
+			delete(s.accountExecutions, accountID)
+		}
+	}
+	select {
+	case execution.sem <- struct{}{}:
+		if ctx.Err() != nil {
+			<-execution.sem
+			releaseReference()
+			return nil, false
+		}
+		return func() {
+			<-execution.sem
+			releaseReference()
+		}, true
+	case <-ctx.Done():
+		releaseReference()
+		return nil, false
+	}
 }
 
 func (s *ScheduledTestRunnerService) acquireWorker(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	s.workerMu.Lock()
 	if s.workerSem == nil {
 		s.workerSem = make(chan struct{}, scheduledTestDefaultMaxWorkers)
@@ -808,6 +1129,10 @@ func (s *ScheduledTestRunnerService) acquireWorker(ctx context.Context) bool {
 	s.workerMu.Unlock()
 	select {
 	case sem <- struct{}{}:
+		if ctx.Err() != nil {
+			<-sem
+			return false
+		}
 		return true
 	case <-ctx.Done():
 		return false

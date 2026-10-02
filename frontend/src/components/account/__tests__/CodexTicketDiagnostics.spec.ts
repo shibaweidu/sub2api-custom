@@ -31,6 +31,21 @@ function mountDiagnostics(overrides: Partial<CodexTurnTicketStatus> = {}, compac
 }
 
 describe('CodexTicketDiagnostics', () => {
+  it('shows 292 routing cookie availability and a fixed safe error', async () => {
+    const wrapper = mountDiagnostics({ target_length: 292, cookie_ready: false, last_error_code: 'cookie_missing' })
+    expect(wrapper.text()).toContain('路由 Cookie 缺失或已过期')
+    expect(wrapper.text()).toContain('账号路由 Cookie：缺失或已过期')
+    expect(wrapper.html()).not.toContain('private-token')
+    await wrapper.setProps({ ticket: { ...ticket, target_length: 292, cookie_ready: true, cookie_remaining_seconds: 42, last_error_code: undefined } })
+    expect(wrapper.text()).toContain('账号路由 Cookie：剩余 42 秒')
+    expect(wrapper.text()).not.toContain('缺失或已过期')
+  })
+
+  it('does not require cookie status for 332 tickets or older servers', () => {
+    expect(mountDiagnostics({ cookie_ready: false }).text()).not.toContain('账号路由 Cookie')
+    expect(mountDiagnostics({ target_length: 292 }).text()).not.toContain('账号路由 Cookie')
+  })
+
   it('shows safe failure details, zero returned length, retry time and unknown plan', () => {
     const wrapper = mountDiagnostics()
     expect(wrapper.text()).toContain('返回门票长度与账号套餐不符')
@@ -39,7 +54,7 @@ describe('CodexTicketDiagnostics', () => {
     expect(wrapper.text()).toContain('返回 / 目标长度：0 / 332')
     expect(wrapper.text()).toContain('下次重试：2026-09-19T10:00:06Z')
     expect(wrapper.text()).toContain('Team 应为 332')
-    expect(wrapper.text()).toContain('代理 #2')
+    expect(wrapper.text()).toContain('池 #2')
     expect(wrapper.text()).toContain('仅记录本次服务运行，重启或停用打票后清空')
     expect(wrapper.html()).not.toContain('secret')
     expect(wrapper.html()).not.toContain('private-token')
@@ -82,5 +97,16 @@ describe('CodexTicketDiagnostics', () => {
     const compact = mountDiagnostics(overrides, true)
     expect(compact.text()).toContain('成功 8 / 失败 4 / 缺失 2')
     expect(compact.attributes('title')).toContain('最近注入缺失：2026-09-19T11:00:00Z')
+  })
+
+  it.each([
+    ['account', '账号代理'],
+    ['direct', '直连'],
+    ['pool', '池 #2'],
+  ] as const)('shows the safe %s route label without exposing a URL', (source, label) => {
+    const wrapper = mountDiagnostics({ last_proxy_source: source, last_proxy_index: 2 })
+    expect(wrapper.text()).toContain(label)
+    if (source !== 'pool') expect(wrapper.text()).not.toContain('池 #2')
+    expect(wrapper.html()).not.toContain('https://')
   })
 })

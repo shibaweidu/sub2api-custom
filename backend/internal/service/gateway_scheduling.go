@@ -1594,6 +1594,9 @@ func (s *GatewayService) isAccountBlockedBySchedulingThreshold(ctx context.Conte
 }
 
 func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
+	if account != nil && account.IsUpstreamBillingRateLimited() {
+		return nil, ErrNoAvailableAccounts
+	}
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}
@@ -1603,6 +1606,9 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 	}
 	if hydrated == nil {
 		return nil, fmt.Errorf("selected gateway account %d not found during hydration", account.ID)
+	}
+	if hydrated.IsUpstreamBillingRateLimited() {
+		return nil, ErrNoAvailableAccounts
 	}
 
 	if account.SelectedProxyID > 0 {
@@ -1938,10 +1944,10 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	preferOAuth := platform == PlatformGemini
 	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, platform)
 
-	// require_privacy_set: 获取分组信息
+	// require_privacy_set: 获取分组配置。GetByID 会聚合账号计数，旧选号路径不能用它。
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByID(ctx, *groupID)
+		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
 	}
 
 	var accounts []Account
@@ -2204,10 +2210,10 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	preferOAuth := nativePlatform == PlatformGemini
 	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, nativePlatform)
 
-	// require_privacy_set: 获取分组信息
+	// require_privacy_set: 获取分组配置。GetByID 会聚合账号计数，旧选号路径不能用它。
 	var schedGroup *Group
 	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByID(ctx, *groupID)
+		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
 	}
 
 	var accounts []Account
@@ -2576,6 +2582,9 @@ func (s *GatewayService) diagnoseSelectionFailure(
 		return selectionFailureDiagnosis{Category: "excluded"}
 	}
 	if !s.isAccountSchedulableForSelection(acc) {
+		if acc.IsUpstreamBillingRateLimited() {
+			return selectionFailureDiagnosis{Category: "unschedulable", Detail: "upstream_billing_rate_limit"}
+		}
 		return selectionFailureDiagnosis{Category: "unschedulable", Detail: "generic_unschedulable"}
 	}
 	if isPlatformFilteredForSelection(acc, platform, allowMixedScheduling) {
