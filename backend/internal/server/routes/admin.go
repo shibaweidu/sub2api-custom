@@ -31,6 +31,27 @@ func RegisterAdminRoutes(
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	{
+		if h.QQBot != nil {
+			bot := admin.Group("/qqbot")
+			bot.GET("/config", h.QQBot.GetConfig)
+			bot.PUT("/config", h.QQBot.SaveConfig)
+			bot.GET("/runtime", h.QQBot.Runtime)
+			bot.DELETE("/groups", h.QQBot.DeleteDiscoveredGroup)
+			bot.GET("/records/:kind", h.QQBot.ListActivityRecords)
+			bot.GET("/checkin", h.QQBot.GetCheckinConfig)
+			bot.PUT("/checkin", h.QQBot.SaveCheckinConfig)
+			bot.GET("/invite", h.QQBot.GetInviteConfig)
+			bot.PUT("/invite", h.QQBot.SaveInviteConfig)
+			bot.GET("/transfer", h.QQBot.GetTransferConfig)
+			bot.PUT("/transfer", h.QQBot.SaveTransferConfig)
+			bot.GET("/lottery", h.QQBot.GetLotteryConfig)
+			bot.PUT("/lottery", h.QQBot.SaveLotteryConfig)
+			bot.GET("/lottery/draws", h.QQBot.ListLotteryDraws)
+			bot.GET("/lottery/users/:user_id", h.QQBot.LotteryState)
+			bot.GET("/bindings", h.QQBot.ListBindings)
+			bot.DELETE("/bindings/:user_id", h.QQBot.Unbind)
+			bot.POST("/test/:kind", h.QQBot.Probe)
+		}
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
 
@@ -358,6 +379,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 	accounts := admin.Group("/accounts")
 	{
 		accounts.GET("", h.Admin.Account.List)
+		accounts.GET("/platforms", h.Admin.Account.ListPlatforms)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
 		accounts.GET("/upstream-billing-probe/settings", h.Admin.Account.GetUpstreamBillingProbeSettings)
 		accounts.PUT("/upstream-billing-probe/settings", h.Admin.Account.UpdateUpstreamBillingProbeSettings)
@@ -367,7 +389,6 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/opencode-go-usage/settings", h.Admin.Account.GetOpenCodeGoUsageSettings)
 		accounts.PUT("/opencode-go-usage/settings", h.Admin.Account.UpdateOpenCodeGoUsageSettings)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
-		accounts.GET("/:id/codex-ticket-history", h.Admin.Account.GetCodexTicketHistory)
 		accounts.GET("/:id/claude/reset-credits", h.Admin.Account.ClaudeResetCredits)
 		// Same protection as the Codex reset-quota route (admin auth, audit, compliance guard).
 		accounts.POST("/:id/claude/reset-credits/redeem", h.Admin.Account.RedeemClaudeResetCredit)
@@ -410,6 +431,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.DELETE("/:id/temp-unschedulable", h.Admin.Account.ClearTempUnschedulable)
 		accounts.POST("/:id/schedulable", h.Admin.Account.SetSchedulable)
 		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
+		accounts.POST("/models/sync-upstream-batch", h.Admin.Account.BatchSyncUpstreamModels)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
 		accounts.POST("/:id/models/sync-upstream", h.Admin.Account.SyncUpstreamModels)
 		accounts.POST("/batch", h.Admin.Account.BatchCreate)
@@ -758,6 +780,7 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/scheduled-test-results/:id/retry", h.Admin.ScheduledTest.RetryResult)
 	// Nested under accounts
 	admin.GET("/accounts/:id/scheduled-test-plans", h.Admin.ScheduledTest.ListByAccount)
+	admin.GET("/accounts/:id/quality-protection", h.Admin.ScheduledTest.AccountProtectionDetails)
 }
 
 func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

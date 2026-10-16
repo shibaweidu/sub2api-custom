@@ -47,10 +47,6 @@ func NewOAuthHandler(oauthService *service.OAuthService) *OAuthHandler {
 	}
 }
 
-type codexTicketDiagnosticsEnricher interface {
-	EnrichOpenAICodexTicketDiagnostics(*service.Account, []service.OpenAICodexTicketStatus)
-}
-
 // AccountHandler handles admin account management
 type AccountHandler struct {
 	claudeResetCredits      claudeResetReader
@@ -71,8 +67,6 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
-	codexTicketSettings     *service.SettingService
-	codexTicketGateway      codexTicketDiagnosticsEnricher
 	cfg                     *config.Config
 	opencodeGoUsage         *service.OpenCodeGoUsageService
 }
@@ -84,15 +78,6 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
-}
-
-// SetCodexTicketSettings supplies the live policy without mutating shared config.
-func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService) {
-	h.codexTicketSettings = settings
-}
-
-func (h *AccountHandler) SetCodexTicketGateway(gateway codexTicketDiagnosticsEnricher) {
-	h.codexTicketGateway = gateway
 }
 
 func (h *AccountHandler) SetOpenCodeGoUsageService(usage *service.OpenCodeGoUsageService) {
@@ -364,7 +349,6 @@ const accountListGroupUngroupedQueryValue = "ungrouped"
 
 func (h *AccountHandler) accountResponseFromService(account *service.Account) *dto.Account {
 	out := dto.AccountFromService(account)
-	h.enrichCodexTicketStatus(account, out)
 	if h != nil && h.ollamaCloudUsage != nil && out != nil {
 		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
 	}
@@ -373,7 +357,6 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 
 func (h *AccountHandler) accountListResponseFromService(account *service.Account) *dto.Account {
 	out := dto.AccountFromServiceShallow(account)
-	h.enrichCodexTicketStatus(account, out)
 	if out != nil && account != nil {
 		out.Proxy = dto.ProxyFromService(account.Proxy)
 	}
@@ -381,25 +364,6 @@ func (h *AccountHandler) accountListResponseFromService(account *service.Account
 		h.ollamaCloudUsage.EnrichState(out.OllamaCloudUsage)
 	}
 	return out
-}
-
-func (h *AccountHandler) enrichCodexTicketStatus(account *service.Account, out *dto.Account) {
-	if out == nil || account == nil || !account.IsOpenAIOAuthLike() || account.IsShadow() {
-		return
-	}
-	cfg := config.OpenAICodexTicketConfig{}
-	if h != nil && h.cfg != nil {
-		cfg = h.cfg.Gateway.OpenAICodexTicket
-	}
-	if h != nil && h.codexTicketSettings != nil {
-		cfg.Enabled = h.codexTicketSettings.GetOpenAICodexTicketEnabled(context.Background(), cfg.Enabled)
-	}
-	policy := service.ResolveOpenAICodexTicketAccountConfig(account, cfg)
-	out.CodexTicketConfig = &policy
-	out.CodexTurnTickets = service.OpenAICodexTicketStatuses(account, cfg, time.Now())
-	if h != nil && h.codexTicketGateway != nil {
-		h.codexTicketGateway.EnrichOpenAICodexTicketDiagnostics(account, out.CodexTurnTickets)
-	}
 }
 
 func (h *AccountHandler) isSimpleMode() bool {
@@ -684,7 +648,21 @@ func (h *AccountHandler) listAccountSchedulerScoreFilterPool(
 	return accounts
 }
 
-// List handles listing all accounts with pagination
+// ListPlatforms returns global account platform counts without list filters.
+// GET /api/v1/admin/accounts/platforms
+func (h *AccountHandler) ListPlatforms(c *gin.Context) {
+	counts, err := h.adminService.ListAccountPlatformCounts(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if counts == nil {
+		counts = []service.AccountPlatformCount{}
+	}
+	response.Success(c, counts)
+}
+
+// List handles listing all accounts with pagination.
 // GET /api/v1/admin/accounts
 func (h *AccountHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
@@ -3121,7 +3099,13 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 		return
 	}
 
-	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), account)
+	var catalog *service.UpstreamModelCatalog
+	if c.Query("replace") == "true" {
+		catalog, err = h.accountTestService.ReplaceModelMappingWithUpstream(c.Request.Context(), account)
+	} else {
+		// Form previews and capability enrichment keep their existing mappings.
+		catalog, err = h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), account)
+	}
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
 		if errors.As(err, &syncErr) {
@@ -3143,6 +3127,130 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 	}
 
 	response.Success(c, catalog)
+}
+
+// BatchSyncUpstreamModels handles syncing live supported models for multiple accounts.
+// POST /api/v1/admin/accounts/models/sync-upstream-batch
+func (h *AccountHandler) BatchSyncUpstreamModels(c *gin.Context) {
+	var req struct {
+		AccountIDs []int64 `json:"account_ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	accountIDs := normalizeInt64IDList(req.AccountIDs)
+	if len(accountIDs) == 0 {
+		response.BadRequest(c, "account_ids is required")
+		return
+	}
+	if h.accountTestService == nil {
+		response.InternalError(c, "Account test service is not configured")
+		return
+	}
+
+	accounts, err := h.adminService.GetAccountsByIDs(c.Request.Context(), accountIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	accountsByID := make(map[int64]*service.Account, len(accounts))
+	for _, account := range accounts {
+		if account != nil {
+			accountsByID[account.ID] = account
+		}
+	}
+
+	type syncError struct {
+		AccountID int64  `json:"account_id"`
+		Error     string `json:"error"`
+	}
+	type syncWarning struct {
+		AccountID int64  `json:"account_id"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+	}
+
+	successIDs := make([]int64, 0, len(accountIDs))
+	failedIDs := make([]int64, 0)
+	errorsByAccount := make([]syncError, 0)
+	warnings := make([]syncWarning, 0)
+	for _, accountID := range accountIDs {
+		if accountsByID[accountID] == nil {
+			failedIDs = append(failedIDs, accountID)
+			errorsByAccount = append(errorsByAccount, syncError{AccountID: accountID, Error: "account not found"})
+		}
+	}
+	const maxConcurrency = 5
+	g, gctx := errgroup.WithContext(c.Request.Context())
+	g.SetLimit(maxConcurrency)
+	var mu sync.Mutex
+
+	for _, accountID := range accountIDs {
+		accountID := accountID
+		account := accountsByID[accountID]
+		if account == nil {
+			continue
+		}
+
+		g.Go(func() error {
+			catalog, syncErr := h.accountTestService.ReplaceModelMappingWithUpstream(gctx, account)
+			mu.Lock()
+			defer mu.Unlock()
+			if syncErr != nil {
+				failedIDs = append(failedIDs, accountID)
+				errorsByAccount = append(errorsByAccount, syncError{
+					AccountID: accountID,
+					Error:     safeUpstreamModelSyncErrorMessage(syncErr),
+				})
+				return nil
+			}
+
+			successIDs = append(successIDs, accountID)
+			for _, warning := range catalog.Warnings {
+				warnings = append(warnings, syncWarning{
+					AccountID: accountID,
+					Code:      warning.Code,
+					Message:   warning.Message,
+				})
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	sort.Slice(successIDs, func(i, j int) bool { return successIDs[i] < successIDs[j] })
+	sort.Slice(failedIDs, func(i, j int) bool { return failedIDs[i] < failedIDs[j] })
+	sort.Slice(errorsByAccount, func(i, j int) bool { return errorsByAccount[i].AccountID < errorsByAccount[j].AccountID })
+	sort.Slice(warnings, func(i, j int) bool {
+		if warnings[i].AccountID != warnings[j].AccountID {
+			return warnings[i].AccountID < warnings[j].AccountID
+		}
+		return warnings[i].Code < warnings[j].Code
+	})
+
+	response.Success(c, gin.H{
+		"total":       len(accountIDs),
+		"success":     len(successIDs),
+		"failed":      len(failedIDs),
+		"success_ids": successIDs,
+		"failed_ids":  failedIDs,
+		"errors":      errorsByAccount,
+		"warnings":    warnings,
+	})
+}
+
+func safeUpstreamModelSyncErrorMessage(err error) string {
+	var syncErr *service.UpstreamModelSyncError
+	if errors.As(err, &syncErr) {
+		return syncErr.SafeMessage()
+	}
+	return "Failed to sync upstream models from upstream"
 }
 
 // SyncUpstreamModelsPreview handles syncing live supported models using provided credentials (no account ID needed).

@@ -20,7 +20,7 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: { length?: number }) => params?.length ? `${key} ${params.length}` : key
+      t: (key: string) => key
     })
   }
 })
@@ -128,43 +128,6 @@ describe('AccountUsageCell', () => {
         dispatchEvent: vi.fn(),
       }))
     })
-  })
-
-  it.each(['oauth', 'setup-token'] as const)('renders Codex ticket status for OpenAI %s accounts', async (type) => {
-    getUsage.mockResolvedValue({})
-    const wrapper = mount(AccountUsageCell, {
-      props: {
-        account: makeAccount({
-          id: type === 'oauth' ? 9701 : 9702,
-          platform: 'openai',
-          type,
-          codex_turn_tickets: [
-            { model: 'gpt-6-astra', target_length: 332, ready: true, remaining_seconds: 2520, blocked: false },
-            { model: 'gpt-5.6-sol', target_length: 332, ready: false, remaining_seconds: 0, blocked: true, attempts: 3, last_length: 0, last_error_code: 'length_mismatch' },
-            { model: 'custom-model', target_length: 332, ready: false, remaining_seconds: 0, blocked: false },
-          ],
-        }),
-      },
-      global: { stubs: {
-        OpenAIQuotaResetCell: { template: '<div data-test="quota-reset" />' },
-        UsageProgressBar: true,
-        AccountQuotaInfo: true,
-      } },
-    })
-    await flushPromises()
-    expect(wrapper.text()).toContain('42m00s')
-    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketPaused 332')
-    expect(wrapper.text()).toContain('admin.accounts.openai.codexTurnTicketMissing 332')
-    expect(wrapper.get('[data-testid="codex-ticket-diagnostics"]').attributes('title')).toContain('codexTicketDiagnostics.length')
-    if (type === 'setup-token') {
-      expect(getUsage).not.toHaveBeenCalled()
-      expect(wrapper.find('[data-test="quota-reset"]').exists()).toBe(false)
-    }
-    await wrapper.setProps({ account: { ...wrapper.props('account'), codex_ticket_config: { gateway_enabled: false, account_enabled: true, enabled: false, fail_closed: true, target_length: 332 } } })
-    expect(wrapper.text()).not.toContain('codexTurnTicket')
-    expect(wrapper.text()).not.toContain('42m00s')
-    expect(wrapper.find('[data-testid="codex-ticket-diagnostics"]').exists()).toBe(false)
-    wrapper.unmount()
   })
 
   it('renders eligible Ollama Cloud state and forwards query updates', async () => {
@@ -520,6 +483,7 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('admin.accounts.aiCreditsBalance')
     expect(wrapper.text()).toContain('25')
   })
+
 
   it('OpenAI OAuth 快照已过期时首屏会重新请求 usage', async () => {
     getUsage.mockResolvedValue({
@@ -1745,6 +1709,101 @@ describe('AccountUsageCell', () => {
 		expect(wrapper.text()).toContain('0')
 		expect(wrapper.text()).toContain('A $0.00')
 		expect(wrapper.text()).toContain('U $0.00')
+		expect(wrapper.text()).toContain('vertex')
+		expect(wrapper.text()).not.toContain('admin.accounts.gemini.quotaPolicy.title')
+		expect(wrapper.text()).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+		expect(getUsage).not.toHaveBeenCalled()
+  })
+
+  it('Gemini 第三方上游 API Key 按普通 Key 账号展示今日统计与额度，不显示 Gemini 徽章', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4002,
+          platform: 'gemini',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://relay.example.com/gemini',
+            api_key: 'sk-relay',
+            tier_id: 'aistudio_free'
+          },
+          extra: {},
+          quota_daily_limit: 10,
+          quota_daily_used: 2.5
+        }),
+        todayStats: {
+          requests: 123,
+          tokens: 2300000,
+          cost: 1.79,
+          standard_cost: 1.79,
+          user_cost: 0
+        }
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).not.toContain('api key')
+    expect(text).not.toContain('ai studio')
+    expect(text).not.toContain('free')
+    expect(text).not.toContain('relay.example.com')
+    expect(wrapper.find('account-quota-info-stub').exists()).toBe(false)
+    expect(text).toContain('123 req')
+    expect(text).toContain('A $1.79')
+    expect(text).toContain('U $0.00')
+    const bars = wrapper.findAll('usage-progress-bar-stub')
+    expect(bars.map((bar) => bar.attributes('label'))).toEqual(['1d'])
+    expect(text).not.toContain('admin.accounts.gemini.quotaPolicy.title')
+    expect(text).not.toContain('admin.accounts.gemini.quotaPolicy.simulatedNote')
+    expect(text).not.toContain('admin.accounts.gemini.rateLimit.unlimited')
+    expect(getUsage).not.toHaveBeenCalled()
+  })
+
+  it('Gemini 官方 API Key 保留 AI Studio 等级与模拟配额', async () => {
+    getUsage.mockResolvedValue({
+      gemini_pro_daily: {
+        utilization: 20,
+        resets_at: '2026-10-11T07:00:00Z',
+        remaining_seconds: 3600
+      }
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4003,
+          platform: 'gemini',
+          type: 'apikey',
+          credentials: {
+            base_url: 'https://generativelanguage.googleapis.com',
+            api_key: 'AIza-official',
+            tier_id: 'aistudio_paid'
+          },
+          extra: {}
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('ai studio paid')
+    expect(text).toContain('admin.accounts.gemini.quotaPolicy.title')
+    expect(text).toContain('admin.accounts.gemini.quotaPolicy.simulatedNote')
+    expect(getUsage).toHaveBeenCalledWith(4003)
   })
 
   it('Anthropic OAuth 会渲染 7d F (Fable) 进度条，且 7d S 逻辑保留', async () => {
