@@ -1193,14 +1193,14 @@ func TestRecoverStaleRecords(t *testing.T) {
 	_ = svc.saveRecord(context.Background(), &BackupRecord{
 		ID:        "stale-1",
 		Status:    "running",
-		StartedAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	})
 	// 模拟一条孤立的恢复中记录
 	_ = svc.saveRecord(context.Background(), &BackupRecord{
 		ID:               "stale-2",
 		Status:           "completed",
 		RestoreStatus:    "running",
-		RestoreStartedAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		RestoreStartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 		StartedAt:        time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
 	})
 
@@ -1231,7 +1231,7 @@ func TestBackupService_RecoverStaleRecords_CleansBackupObjects(t *testing.T) {
 		ID:        "stale-parts",
 		Status:    "running",
 		Parts:     parts,
-		StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	}))
 
 	svc.recoverStaleRecords()
@@ -1259,7 +1259,7 @@ func TestBackupService_RecoverStaleRecords_PreservesKeysWhenCleanupFails(t *test
 		ID:        "stale-cleanup-failed",
 		Status:    "running",
 		Parts:     []BackupPart{part},
-		StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	}))
 
 	svc.recoverStaleRecords()

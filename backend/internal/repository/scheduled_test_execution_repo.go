@@ -31,7 +31,7 @@ func (r *scheduledTestResultRepository) BeginRun(ctx context.Context, plan *serv
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := lockScheduledTestPlanWrites(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func readProtectionAccountSnapshot(ctx context.Context, tx *sql.Tx, accountID in
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {

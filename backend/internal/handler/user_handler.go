@@ -82,8 +82,8 @@ func (h *UserHandler) ListTestResults(c *gin.Context) {
 	var rows []*service.ScheduledTestResult
 	var err error
 	if raw, exists := c.GetQuery("group_id"); exists {
-		groupID, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || groupID <= 0 {
+		groupID, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || groupID <= 0 {
 			response.BadRequest(c, "invalid group_id")
 			return
 		}

@@ -3,19 +3,21 @@ package repository
 import (
 	"context"
 	"fmt"
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProxyPoolRoundRobinAndIndependentCapacity(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	pool := []int64{11, 22, 33}
 	for i := 0; i < 6; i++ {
@@ -47,7 +49,12 @@ func TestProxyPoolConcurrentInstances(t *testing.T) {
 	for _, c := range clients {
 		t.Cleanup(func() { _ = c.Close() })
 	}
-	caches := []*concurrencyCache{NewConcurrencyCache(clients[0], 15, 900).(*concurrencyCache), NewConcurrencyCache(clients[1], 15, 900).(*concurrencyCache)}
+	var caches []*concurrencyCache
+	for _, client := range clients {
+		cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+		require.True(t, ok)
+		caches = append(caches, cache)
+	}
 	var wg sync.WaitGroup
 	results := make(chan int64, 100)
 	errs := make(chan error, 100)
@@ -79,7 +86,8 @@ func TestProxyPoolExpiryAndSingleProxyLegacy(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	cache, valid := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, valid)
 	ctx := context.Background()
 	ok, err := cache.AcquireAccountSlot(ctx, 9, 1, "legacy")
 	require.NoError(t, err)
@@ -102,7 +110,8 @@ func TestProxyPoolPinnedTurnDoesNotMoveToFreeProxy(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(*concurrencyCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	id, err := cache.AcquireAccountProxyPoolSlot(ctx, 7, []int64{11, 22}, 1, "busy", 22)
 	require.NoError(t, err)

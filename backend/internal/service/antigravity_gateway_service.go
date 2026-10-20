@@ -623,7 +623,7 @@ func extractAntigravityTestContent(respBody []byte) (string, []TestConnectionIma
 			if message, _ := errData["message"].(string); strings.TrimSpace(message) != "" {
 				return "", nil, errors.New(message)
 			}
-			return "", nil, errors.New("Antigravity response contained an error")
+			return "", nil, errors.New("antigravity response contained an error")
 		}
 
 		// 尝试从 response.candidates[0].content.parts[] 提取
@@ -644,7 +644,7 @@ func extractAntigravityTestContent(respBody []byte) (string, []TestConnectionIma
 		}
 		if finishReason, _ := candidate["finishReason"].(string); strings.TrimSpace(finishReason) != "" {
 			if isAccountTestTruncationFinishReason(finishReason) || strings.EqualFold(strings.TrimSpace(finishReason), "max_tokens") {
-				return "", nil, fmt.Errorf("Antigravity response truncated (finishReason=%s)", finishReason)
+				return "", nil, fmt.Errorf("antigravity response truncated (finishReason=%s)", finishReason)
 			}
 			completed = true
 		}
@@ -680,9 +680,9 @@ func extractAntigravityTestContent(respBody []byte) (string, []TestConnectionIma
 
 	if !completed {
 		if !seenJSON {
-			return "", nil, errors.New("Antigravity response was not valid SSE or JSON")
+			return "", nil, errors.New("antigravity response was not valid SSE or JSON")
 		}
-		return "", nil, errors.New("Antigravity response ended without a terminal finishReason")
+		return "", nil, errors.New("antigravity response ended without a terminal finishReason")
 	}
 	return strings.Join(texts, ""), images, nil
 }

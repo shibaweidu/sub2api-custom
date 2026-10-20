@@ -108,7 +108,7 @@ func rewardCodeHash(raw string) string {
 		return "invalid"
 	}
 	for _, ch := range code {
-		if !(ch >= 'A' && ch <= 'Z') && !(ch >= '2' && ch <= '7') {
+		if (ch < 'A' || ch > 'Z') && (ch < '2' || ch > '7') {
 			return "invalid"
 		}
 	}
@@ -197,7 +197,7 @@ func (s *Service) ListRewardCodes(ctx context.Context, search, status string, pa
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var r RewardCode
 		if err = rows.Scan(&r.ID, &r.AppID, &r.CodeHint, &r.BatchName, &r.RewardType, &r.Amount, &r.Quantity, &r.PrizeName, &r.ClaimInstructions, &r.TargetUserID, &r.ExpiresAt, &r.Status, &r.UserID, &r.Email, &r.MemberID, &r.RedeemedAt, &r.FulfilledAt, &r.FulfillmentNote, &r.CreatedAt); err != nil {

@@ -122,9 +122,10 @@ func TestScheduledTestActionStatisticsFollowMovedAccountsWithoutChangingVisibili
 					collectedIDs = append(collectedIDs, *filter.AccountID)
 				}
 			}
-			if tc.mode == "account" {
+			switch tc.mode {
+			case "account":
 				require.Equal(t, []int64{13}, collectedIDs)
-			} else if tc.mode == "all_accounts" {
+			case "all_accounts":
 				require.ElementsMatch(t, []int64{12, 13}, collectedIDs)
 			}
 			for range count {

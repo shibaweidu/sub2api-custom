@@ -25,13 +25,13 @@ func lockAccountMembershipProtection(ctx context.Context, tx sqlExecutor, accoun
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -58,13 +58,13 @@ func releaseDetachedAccountProtection(ctx context.Context, tx sqlExecutor, accou
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		detached = append(detached, id)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil || len(detached) == 0 {
 		return err
 	}

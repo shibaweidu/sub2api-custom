@@ -42,11 +42,11 @@ func validateScheduledTestPlanConflicts(ctx context.Context, tx *sql.Tx, plan *s
 		other := &service.ScheduledTestPlan{Enabled: true}
 		var raw []byte
 		if err := rows.Scan(&other.ID, &other.Name, pq.Array(&other.GroupIDs), &raw, pq.Array(&other.ExcludedAccountIDs)); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(raw, &other.Protection); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if enabledScheduledTestRoutingPlan(other) {
@@ -54,7 +54,7 @@ func validateScheduledTestPlanConflicts(ctx context.Context, tx *sql.Tx, plan *s
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}

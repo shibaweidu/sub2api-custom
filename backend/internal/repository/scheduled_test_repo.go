@@ -40,7 +40,7 @@ func (r *scheduledTestPlanRepository) Create(ctx context.Context, plan *service.
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := lockScheduledTestPlanWrites(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := lockScheduledTestPlanWrites(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -200,7 +200,7 @@ func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) erro
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := lockScheduledTestPlanWrites(ctx, tx); err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func (r *scheduledTestPlanRepository) List(ctx context.Context) ([]*service.Sche
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanPlans(rows)
 }
 
@@ -302,7 +302,7 @@ func (r *scheduledTestDefinitionRepository) List(ctx context.Context, enabledOnl
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*service.ScheduledTestDefinition
 	for rows.Next() {
 		d, e := r.scan(rows)
@@ -504,7 +504,7 @@ WHERE id = ANY($1)`, pq.Array(ids))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	byID := make(map[int64]*service.ScheduledTestResult, len(results))
 	for _, result := range results {
 		if result != nil {
@@ -667,7 +667,7 @@ ORDER BY vr.account_schedulable DESC NULLS LAST, (vr.status IN ('success', 'pass
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanVisibleTestResults(rows)
 }
 
@@ -698,7 +698,7 @@ LIMIT $3`, userID, groupID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanVisibleTestResults(rows)
 }
 
@@ -744,7 +744,7 @@ WHERE history_rank = 1
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanVisibleTestResults(rows)
 }
 
@@ -791,7 +791,7 @@ LIMIT $4`, userID, resultID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanVisibleTestResults(rows)
 }
 
@@ -836,7 +836,7 @@ LIMIT $5`, userID, resultID, groupID, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanVisibleTestResults(rows)
 }
 
@@ -864,7 +864,7 @@ func (r *scheduledTestResultRepository) Delete(ctx context.Context, id int64) er
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := lockProtectionPlan(ctx, tx, planID); err != nil {
 		return err
 	}

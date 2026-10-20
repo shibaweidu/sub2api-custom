@@ -3122,7 +3122,6 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 	reader := bufio.NewReader(body)
 	seenSSEData := false
 	seenStopReason := ""
-	completed := false
 
 	for {
 		line, readErr := reader.ReadString('\n')
@@ -3166,7 +3165,6 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 						if isAccountTestTruncationFinishReason(seenStopReason) {
 							return s.sendErrorAndEnd(c, fmt.Sprintf("Claude response truncated (stop_reason=%s)", seenStopReason))
 						}
-						completed = true
 						s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 						return nil
 					case "error":
@@ -3191,7 +3189,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 
 		if readErr != nil {
 			if readErr == io.EOF {
-				if completed || isAccountTestTerminalStopReason(seenStopReason) {
+				if isAccountTestTerminalStopReason(seenStopReason) {
 					if isAccountTestTruncationFinishReason(seenStopReason) {
 						return s.sendErrorAndEnd(c, fmt.Sprintf("Claude response truncated (stop_reason=%s)", seenStopReason))
 					}

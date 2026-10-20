@@ -60,7 +60,9 @@ func TestContentModerationUserWhitelistAllProtocols(t *testing.T) {
 			require.Zero(t, svc.preBlockChecked.Load())
 			require.Zero(t, svc.asyncEnqueued.Load())
 			require.Empty(t, svc.asyncQueue)
-			require.Empty(t, svc.repo.(*contentModerationTestRepo).snapshotLogs())
+			repo, ok := svc.repo.(*contentModerationTestRepo)
+			require.True(t, ok)
+			require.Empty(t, repo.snapshotLogs())
 
 			input.UserID = 8
 			decision, err = svc.Check(context.Background(), input)
@@ -106,7 +108,9 @@ func TestContentModerationUserWhitelistSkipsHashAPIAndObserveQueue(t *testing.T)
 			require.Zero(t, apiCalls.Load())
 			require.Empty(t, cache.snapshotChecked())
 			require.Empty(t, cache.snapshotRecorded())
-			require.Empty(t, svc.repo.(*contentModerationTestRepo).snapshotLogs())
+			repo, ok := svc.repo.(*contentModerationTestRepo)
+			require.True(t, ok)
+			require.Empty(t, repo.snapshotLogs())
 			require.Empty(t, svc.asyncQueue)
 			require.Zero(t, svc.asyncEnqueued.Load())
 			require.Zero(t, svc.preBlockChecked.Load())
@@ -266,7 +270,8 @@ func TestContentModerationUserWhitelistSkipsAlreadyQueuedAudits(t *testing.T) {
 	input.UserID = 8
 	svc.enqueueAsync(input, cfg, content, content.Hash())
 	go svc.worker(0)
-	repo := svc.repo.(*contentModerationTestRepo)
+	repo, ok := svc.repo.(*contentModerationTestRepo)
+	require.True(t, ok)
 	require.Eventually(t, func() bool {
 		return svc.asyncProcessed.Load() >= 1 && len(svc.asyncQueue) == 0
 	}, time.Second, time.Millisecond)
@@ -275,5 +280,7 @@ func TestContentModerationUserWhitelistSkipsAlreadyQueuedAudits(t *testing.T) {
 	require.NotNil(t, logs[0].UserID)
 	require.Equal(t, int64(8), *logs[0].UserID)
 	require.EqualValues(t, 1, apiCalls.Load())
-	require.Len(t, svc.hashCache.(*contentModerationTestHashCache).snapshotRecorded(), 1)
+	cache, ok := svc.hashCache.(*contentModerationTestHashCache)
+	require.True(t, ok)
+	require.Len(t, cache.snapshotRecorded(), 1)
 }

@@ -16,7 +16,7 @@ WHERE ag.group_id=$1 AND a.deleted_at IS NULL ORDER BY a.id`, groupID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64

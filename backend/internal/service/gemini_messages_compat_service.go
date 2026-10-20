@@ -2619,11 +2619,6 @@ func unwrapIfNeeded(isOAuth bool, raw []byte) []byte {
 	return inner
 }
 
-func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsage, error) {
-	collected, usage, _, err := collectGeminiSSEObserved(body, isOAuth, nil)
-	return collected, usage, err
-}
-
 // geminiSSECollectStats 记录一次 SSE 聚合读到的 data 事件数，以及非 data 行的兜底内容。
 type geminiSSECollectStats struct {
 	dataEvents int
@@ -3001,7 +2996,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						if pendingPrefix.Len()+len(line) > 8<<20 {
 							return nil, errors.New("upstream response body too large")
 						}
-						pendingPrefix.WriteString(line)
+						_, _ = pendingPrefix.WriteString(line)
 					} else {
 						startDownstream()
 						_, _ = io.WriteString(c.Writer, line)
@@ -3073,7 +3068,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if pendingPrefix.Len()+len(line) > 8<<20 {
 						return nil, errors.New("upstream response body too large")
 					}
-					pendingPrefix.WriteString(line)
+					_, _ = pendingPrefix.WriteString(line)
 				} else {
 					startDownstream()
 					_, _ = io.WriteString(c.Writer, line)

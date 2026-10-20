@@ -68,11 +68,16 @@ func sessionCacheFor(profile *Profile, scope string) utls.ClientSessionCache {
 	}
 	key := name + "|" + scope
 	if cached, ok := tlsSessionCaches.Load(key); ok {
-		return cached.(utls.ClientSessionCache)
+		if cache, ok := cached.(utls.ClientSessionCache); ok {
+			return cache
+		}
 	}
 	candidate := utls.NewLRUClientSessionCache(32)
 	actual, _ := tlsSessionCaches.LoadOrStore(key, candidate)
-	return actual.(utls.ClientSessionCache)
+	if cache, ok := actual.(utls.ClientSessionCache); ok {
+		return cache
+	}
+	return candidate
 }
 
 // Default TLS fingerprint values captured from Claude Code (Node.js 24.x)

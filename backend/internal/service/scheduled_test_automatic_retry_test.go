@@ -207,7 +207,9 @@ func TestScheduledTestAutomaticRetrySkipsLaterDefinitionsAfterExhaustion(t *test
 	require.Equal(t, results.created[0].ID, first.ID)
 	require.Equal(t, results.created[1].ID, second.ID)
 	require.Empty(t, results.updated)
-	require.Equal(t, 1, runner.planRepo.(*runnerPlanRepoStub).updated, "one multi-type rule advances its schedule once")
+	planRepo, ok := runner.planRepo.(*runnerPlanRepoStub)
+	require.True(t, ok)
+	require.Equal(t, 1, planRepo.updated, "one multi-type rule advances its schedule once")
 }
 
 func TestScheduledTestCompatibilityCombinationShortCircuitsOnlyImpossibleBranches(t *testing.T) {

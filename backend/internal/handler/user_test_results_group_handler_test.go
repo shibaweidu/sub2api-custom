@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,6 +20,7 @@ type userTestGroupResultsRepo struct {
 	allRows    []*service.ScheduledTestResult
 	latestRows []*service.ScheduledTestResult
 	allCalls   int
+	err        error
 	recentCall struct {
 		groupID int64
 		limit   int
@@ -27,12 +29,28 @@ type userTestGroupResultsRepo struct {
 
 func (r *userTestGroupResultsRepo) ListVisibleForGroup(_ context.Context, _, groupID int64) ([]*service.ScheduledTestResult, error) {
 	r.allCalls++
-	return r.allRows, nil
+	return r.allRows, r.err
 }
 
 func (r *userTestGroupResultsRepo) ListVisibleRecentForGroup(_ context.Context, _, groupID int64, limit int) ([]*service.ScheduledTestResult, error) {
 	r.recentCall.groupID, r.recentCall.limit = groupID, limit
-	return r.latestRows, nil
+	return r.latestRows, r.err
+}
+
+func TestListTestResultsForGroupQueryFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, query := range []string{"?group_id=8", "?group_id=8&limit=4"} {
+		t.Run(query, func(t *testing.T) {
+			repo := &userTestGroupResultsRepo{err: errors.New("test query failed")}
+			h := &UserHandler{scheduledTestSvc: service.NewScheduledTestService(nil, repo)}
+			response := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(response)
+			c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})
+			c.Request = httptest.NewRequest(http.MethodGet, "/test-results"+query, nil)
+			h.ListTestResults(c)
+			require.Equal(t, http.StatusInternalServerError, response.Code)
+		})
+	}
 }
 
 func TestListTestResultsForGroupReturnsAllRowsWithOpaqueSetKeys(t *testing.T) {
