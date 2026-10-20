@@ -16,6 +16,7 @@ type userTestMonitorRepo struct {
 	service.ScheduledTestResultRepository
 	userID    int64
 	groupView bool
+	groupID   int64
 }
 
 func (r *userTestMonitorRepo) ListVisible(_ context.Context, userID int64, _ int) ([]*service.ScheduledTestResult, error) {
@@ -28,16 +29,24 @@ func (r *userTestMonitorRepo) ListVisibleByGroup(_ context.Context, userID int64
 	return []*service.ScheduledTestResult{{ID: 1, Status: "success", QualityVerdict: "fail", ProtectionDecision: &service.ScheduledTestProtectionDecision{Reason: "private detail"}}}, nil
 }
 
+func (r *userTestMonitorRepo) ListVisibleForGroup(_ context.Context, userID, groupID int64) ([]*service.ScheduledTestResult, error) {
+	r.userID, r.groupID = userID, groupID
+	return nil, nil
+}
+
 func TestUserTestMonitorUsesAuthenticatedGroupScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		query           string
 		auth, groupView bool
 		status          int
+		groupID         int64
 	}{
-		{"?group_view=all", false, false, 401},
-		{"", true, false, 200},
-		{"?group_view=all&user_id=999&group_id=999", true, true, 200},
+		{"?group_view=all", false, false, 401, 0},
+		{"?group_view=all&group_id=999", false, false, 401, 0},
+		{"", true, false, 200, 0},
+		{"?group_view=all&user_id=999", true, true, 200, 0},
+		{"?group_view=all&user_id=999&group_id=999", true, false, 200, 999},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			repo := &userTestMonitorRepo{}
@@ -51,6 +60,7 @@ func TestUserTestMonitorUsesAuthenticatedGroupScope(t *testing.T) {
 			h.ListTestResults(c)
 			require.Equal(t, tc.status, response.Code)
 			require.Equal(t, tc.groupView, repo.groupView)
+			require.Equal(t, tc.groupID, repo.groupID)
 			if tc.auth {
 				require.Equal(t, int64(42), repo.userID)
 			}

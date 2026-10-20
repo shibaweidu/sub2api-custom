@@ -931,7 +931,7 @@ func preserveLockedAccountSchedulingState(account *service.Account, current acco
 	// effect of saving an account snapshot loaded before a manual pause.
 	account.Schedulable = account.Schedulable && current.schedulable
 	delete(extra, qualityReasonKey)
-	if !(account.StatusChanged && account.Status != service.StatusQualityPaused) && currentHasQualityReason {
+	if (!account.StatusChanged || account.Status == service.StatusQualityPaused) && currentHasQualityReason {
 		extra[qualityReasonKey] = currentExtra[qualityReasonKey]
 	}
 	// Trial metadata belongs to durable protection state, never a stale account

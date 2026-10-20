@@ -112,6 +112,21 @@ describe('test result output', () => {
     expect(wrapper.find('img').exists()).toBe(false)
   })
 
+  it('truncates long text in compact result cards to the configured preview height', () => {
+    const response = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join('\n')
+    const wrapper = mount(TestResultOutput, { global, props: {
+      compact: true,
+      maxPreviewHeight: 180,
+      result: { id: 3, status: 'failed', output_kind: 'html', response_text: response },
+    } })
+    const preview = wrapper.get('[data-response-preview]')
+    expect(preview.element.style.maxHeight).toBe('180px')
+    expect(preview.element.style.webkitLineClamp).toBe('7')
+    expect(preview.classes()).toContain('overflow-hidden')
+    expect(preview.text()).toContain('line 100')
+    wrapper.unmount()
+  })
+
   it('scales the full HTML document in a compact gallery without clipping tall or wide content', async () => {
     const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 240 } as DOMRect)
     const wrapper = mount(TestResultOutput, { global, props: { compact: true, result: { id: 4, status: 'success', output_kind: 'html', output_html: '<div style="width:1200px;height:1600px">Full artwork</div>', response_text: 'raw content' } } })

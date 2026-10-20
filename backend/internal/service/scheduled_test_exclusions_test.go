@@ -11,11 +11,11 @@ import (
 func TestScheduledTestExclusionsSkipAllChecksAndRetries(t *testing.T) {
 	repo := &snapshotResultRepoStub{
 		retryResultRepoStub: &retryResultRepoStub{updated: make(chan *ScheduledTestResult, 16)},
-		targets:             []int64{12, 13, 12},
+		targets:             []int64{12, 13, 14, 12},
 	}
 	var excludedCalls, includedCalls atomic.Int32
 	accounts := scheduledTestExecutionAccountRepo{get: func(_ context.Context, id int64) (*Account, error) {
-		if id == 12 {
+		if id != 13 {
 			excludedCalls.Add(1)
 		} else {
 			includedCalls.Add(1)
@@ -35,6 +35,7 @@ func TestScheduledTestExclusionsSkipAllChecksAndRetries(t *testing.T) {
 	plan.AccountID, plan.GroupID, plan.TargetMode = nil, scheduledTestPtrInt64(8), "all_accounts"
 	plan.TestDefinitionIDs = []int64{1, 2, 3}
 	plan.ExcludedAccountIDs = []int64{12}
+	plan.AccountIDs = []int64{12, 13}
 	runner.RunPlanNow(context.Background(), plan)
 	close(repo.updated)
 	for result := range repo.updated {

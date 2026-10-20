@@ -28,15 +28,16 @@ func (r *scheduledTestResultRepository) listPlanAccountIDs(ctx context.Context, 
 	}
 	rows, err := r.db.QueryContext(ctx, `SELECT a.id FROM accounts a
  WHERE a.deleted_at IS NULL AND ($1::bigint IS NULL OR a.id=$1)
- AND NOT (a.id = ANY(COALESCE($4::bigint[], '{}')))
+ AND NOT (a.id = ANY(COALESCE($5::bigint[], '{}')))
  AND (NOT $3 OR (a.schedulable AND a.status IN ('active','quality_paused')))
  AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
              WHERE ag.account_id=a.id AND ag.group_id=ANY($2) AND g.deleted_at IS NULL AND g.status='active')
- ORDER BY a.id`, accountID, pq.Array(plan.GroupIDs), eligibleOnly, pq.Array(plan.ExcludedAccountIDs))
+	 AND (COALESCE(cardinality($4::bigint[]),0)=0 OR a.id=ANY($4::bigint[]))
+	 ORDER BY a.id`, accountID, pq.Array(plan.GroupIDs), eligibleOnly, pq.Array(plan.AccountIDs), pq.Array(plan.ExcludedAccountIDs))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := make([]int64, 0)
 	for rows.Next() {
 		var id int64
@@ -103,7 +104,7 @@ func (r *scheduledTestPlanRepository) validateProtectionGroups(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
 		var id int64
@@ -324,15 +325,15 @@ func reconcileProtectionGroups(ctx context.Context, tx *sql.Tx, state *protectio
 		var evidenceCurrent bool
 		var inRecovery bool
 		if err := rows.Scan(&raw, &entry.currentVerdict, &entry.automated, &entry.adminVerdict, &configRaw, &evidenceCurrent, &inRecovery); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(raw, &entry.rule); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(configRaw, &config); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if protectionRuleCurrent(&config, entry.rule) {
@@ -348,7 +349,7 @@ func reconcileProtectionGroups(ctx context.Context, tx *sql.Tx, state *protectio
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -421,7 +422,7 @@ func reconcileProtectionGroups(ctx context.Context, tx *sql.Tx, state *protectio
 	for rows.Next() {
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -476,8 +477,8 @@ func (r *scheduledTestResultRepository) BeginProtectionRun(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config, excluded_account_ids FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
+	defer func() { _ = tx.Rollback() }()
+	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config, account_ids, auto_publish_results, excluded_account_ids FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
 	if err != nil {
 		return err
 	}
@@ -494,13 +495,13 @@ func (r *scheduledTestResultRepository) BeginProtectionRun(ctx context.Context, 
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		ids = append(ids, id)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}

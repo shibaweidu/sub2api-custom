@@ -30,6 +30,7 @@ INSERT INTO user_allowed_groups(user_id,group_id) VALUES (100,99013)`)
 	row, err := results.Create(ctx, &service.ScheduledTestResult{
 		PlanID: plan.ID, TestDefinitionID: &candyID, AccountID: &accountID, GroupID: &groupID,
 		TargetMode: "all_accounts", ModelID: "model", OutputKind: "number", ResponseText: "29", Status: "success",
+		Published: true,
 		StartedAt: time.Now(), FinishedAt: time.Now(),
 	})
 	require.NoError(t, err)
@@ -70,6 +71,38 @@ INSERT INTO user_allowed_groups(user_id,group_id) VALUES (100,99013)`)
 		}
 	}
 	require.Equal(t, 1, count, "ordinary results keep their original grouping")
+	t.Run("linked group shares recent work and history with publication controls", func(t *testing.T) {
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		var latestID int64
+		for i := 0; i < 4; i++ {
+			copy := *row
+			copy.StartedAt, copy.FinishedAt = at.Add(time.Duration(i)*time.Second), at.Add(time.Duration(i)*time.Second)
+			created, err := results.Create(ctx, &copy)
+			require.NoError(t, err)
+			latestID = created.ID
+		}
+		recent, err := results.ListVisibleRecentForGroup(ctx, 100, 99013, 4)
+		require.NoError(t, err)
+		require.Len(t, recent, 4, "a secondary group membership can fill all four previews")
+		require.Equal(t, latestID, recent[0].ID)
+		for _, got := range recent {
+			require.Equal(t, int64(99013), *got.GroupID)
+		}
+		history, err := results.ListVisibleHistoryForGroup(ctx, 100, 99013, latestID, 0, 20)
+		require.NoError(t, err)
+		require.Len(t, history, 5, "the linked page reads the same published history")
+		require.NoError(t, results.SetPublished(ctx, latestID, false))
+		recent, err = results.ListVisibleRecentForGroup(ctx, 100, 99013, 4)
+		require.NoError(t, err)
+		require.Len(t, recent, 4)
+		require.NotEqual(t, latestID, recent[0].ID, "hidden work does not displace published previews")
+		_, err = results.ListVisibleHistoryForGroup(ctx, 100, 99013, latestID, 0, 20)
+		require.ErrorIs(t, err, sql.ErrNoRows, "a direct URL cannot reveal unpublished work")
+		require.NoError(t, results.SetPublished(ctx, latestID, true))
+		private, err := results.ListVisibleRecentForGroup(ctx, 100, 99012, 4)
+		require.NoError(t, err)
+		require.Empty(t, private, "secondary memberships still require group access")
+	})
 	_, err = db.ExecContext(ctx, `DELETE FROM account_groups WHERE account_id=99001 AND group_id=99011;
 DELETE FROM user_allowed_groups WHERE user_id=100 AND group_id=99013`)
 	require.NoError(t, err)

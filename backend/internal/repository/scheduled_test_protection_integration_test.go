@@ -90,6 +90,8 @@ INSERT INTO account_groups VALUES(62,8),(62,9),(63,8);`)
 		"262_scheduled_test_execution_snapshot.sql",
 		"281_scheduled_test_membership_revocation.sql",
 		"264_scheduled_test_cache_recovery.sql", "265_scheduled_test_generic_policy.sql", "268_scheduled_test_combination_states.sql", "270_scheduled_test_time_periods.sql", "282_scheduled_test_excluded_accounts.sql", "276_scheduled_test_cost_control.sql",
+		"279_scheduled_test_account_selection_and_publishing.sql",
+		"284_scheduled_test_output_tokens.sql",
 	} {
 		raw, err := migrations.FS.ReadFile(name)
 		require.NoError(t, err)
@@ -122,7 +124,7 @@ INSERT INTO account_groups VALUES(62,8),(62,9),(63,8);`)
 		t.Helper()
 		sequence++
 		started := time.Now().UTC().Add(time.Duration(sequence) * time.Second).Truncate(time.Microsecond)
-		result, err := repo.Create(ctx, &service.ScheduledTestResult{PlanID: plan.ID, TestDefinitionID: &definition, GroupID: plan.GroupID, AccountID: &accountID, TargetMode: plan.TargetMode, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, Status: "running", OutputKind: "html", StartedAt: started, FinishedAt: started})
+		result, err := repo.Create(ctx, &service.ScheduledTestResult{Published: true, PlanID: plan.ID, TestDefinitionID: &definition, GroupID: plan.GroupID, AccountID: &accountID, TargetMode: plan.TargetMode, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, Status: "running", OutputKind: "html", StartedAt: started, FinishedAt: started})
 		require.NoError(t, err)
 		exec(`UPDATE scheduled_test_plans SET latest_run_id=$2 WHERE id=$1`, plan.ID, fmt.Sprintf("fixture-%d", plan.ID))
 		exec(`UPDATE scheduled_test_results SET run_id=$2 WHERE id=$1`, result.ID, fmt.Sprintf("fixture-%d", plan.ID))

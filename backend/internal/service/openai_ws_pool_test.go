@@ -2298,25 +2298,6 @@ func TestOpenAIWSConnPool_Acquire_ErrorBranches(t *testing.T) {
 
 type openAIWSFakeDialer struct{}
 
-type openAIWSDeadlineProbeDialer struct {
-	hasDeadline bool
-	remaining   time.Duration
-}
-
-func (d *openAIWSDeadlineProbeDialer) Dial(
-	ctx context.Context,
-	_ string,
-	_ http.Header,
-	_ string,
-) (openAIWSClientConn, int, http.Header, error) {
-	deadline, ok := ctx.Deadline()
-	d.hasDeadline = ok
-	if ok {
-		d.remaining = time.Until(deadline)
-	}
-	return &openAIWSFakeConn{}, http.StatusSwitchingProtocols, nil, nil
-}
-
 func (d *openAIWSFakeDialer) Dial(
 	ctx context.Context,
 	wsURL string,

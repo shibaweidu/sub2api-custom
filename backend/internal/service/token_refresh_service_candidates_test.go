@@ -50,7 +50,7 @@ func (r *tokenRefreshCandidateRepo) ListOAuthRefreshCandidatePage(_ context.Cont
 				break
 			}
 		}
-		if options.ActiveOnly && account.Status != StatusActive && !(options.IncludeQualityPaused && account.Status == StatusQualityPaused) ||
+		if options.ActiveOnly && account.Status != StatusActive && (!options.IncludeQualityPaused || account.Status != StatusQualityPaused) ||
 			account.Type != AccountTypeOAuth ||
 			!platformAllowed ||
 			options.RequireRefreshToken && strings.TrimSpace(refreshToken) == "" ||

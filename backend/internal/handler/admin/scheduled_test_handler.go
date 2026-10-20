@@ -153,6 +153,8 @@ type createScheduledTestPlanRequest struct {
 	Name               string                                `json:"name"`
 	SortOrder          *int                                  `json:"sort_order"`
 	GroupIDs           []int64                               `json:"group_ids" binding:"required"`
+	AccountIDs         []int64                               `json:"account_ids"`
+	AutoPublishResults *bool                                 `json:"auto_publish_results"`
 	ExcludedAccountIDs []int64                               `json:"excluded_account_ids"`
 	TestDefinitionIDs  []int64                               `json:"test_definition_ids" binding:"required"`
 	ModelID            string                                `json:"model_id"`
@@ -169,6 +171,8 @@ type updateScheduledTestPlanRequest struct {
 	Name               *string                                `json:"name"`
 	SortOrder          *int                                   `json:"sort_order"`
 	GroupIDs           json.RawMessage                        `json:"group_ids"`
+	AccountIDs         json.RawMessage                        `json:"account_ids"`
+	AutoPublishResults *bool                                  `json:"auto_publish_results"`
 	ExcludedAccountIDs json.RawMessage                        `json:"excluded_account_ids"`
 	TestDefinitionIDs  json.RawMessage                        `json:"test_definition_ids"`
 	ModelID            string                                 `json:"model_id"`
@@ -232,6 +236,7 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	plan := &service.ScheduledTestPlan{
 		Name:               req.Name,
 		GroupIDs:           req.GroupIDs,
+		AccountIDs:         req.AccountIDs,
 		ExcludedAccountIDs: req.ExcludedAccountIDs,
 		TestDefinitionIDs:  req.TestDefinitionIDs,
 		ModelID:            req.ModelID,
@@ -239,6 +244,7 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 		CronExpression:     req.CronExpression,
 		Schedule:           req.Schedule,
 		Enabled:            true,
+		AutoPublishResults: true,
 		MaxResults:         req.MaxResults,
 		Protection:         req.Protection,
 	}
@@ -251,6 +257,9 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		plan.Enabled = *req.Enabled
+	}
+	if req.AutoPublishResults != nil {
+		plan.AutoPublishResults = *req.AutoPublishResults
 	}
 	if req.AutoRecover != nil {
 		plan.AutoRecover = *req.AutoRecover
@@ -321,6 +330,14 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		}
 		existing.GroupIDs = ids
 	}
+	if len(req.AccountIDs) > 0 {
+		var ids []int64
+		if err := json.Unmarshal(req.AccountIDs, &ids); err != nil || ids == nil {
+			response.BadRequest(c, "account_ids must be an array")
+			return
+		}
+		existing.AccountIDs = ids
+	}
 	if len(req.ExcludedAccountIDs) > 0 {
 		var ids []int64
 		if err := json.Unmarshal(req.ExcludedAccountIDs, &ids); err != nil || ids == nil {
@@ -354,6 +371,9 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
+	}
+	if req.AutoPublishResults != nil {
+		existing.AutoPublishResults = *req.AutoPublishResults
 	}
 	if req.MaxResults > 0 {
 		existing.MaxResults = req.MaxResults
@@ -425,6 +445,30 @@ func (h *ScheduledTestHandler) DeleteResult(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+func (h *ScheduledTestHandler) SetResultPublished(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "invalid test result id")
+		return
+	}
+	var req struct {
+		Published *bool `json:"published" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Published == nil {
+		response.BadRequest(c, "published is required")
+		return
+	}
+	if err := h.scheduledTestSvc.SetResultPublished(c.Request.Context(), id, *req.Published); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.NotFound(c, "test result not found")
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"published": *req.Published})
 }
 
 func (h *ScheduledTestHandler) RunNow(c *gin.Context) {

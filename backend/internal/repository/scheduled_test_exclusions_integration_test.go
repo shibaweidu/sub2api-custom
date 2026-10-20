@@ -81,4 +81,19 @@ func testScheduledTestExcludedAccounts(t *testing.T, ctx context.Context, db *sq
 	ids, err = repo.ListPlanTargetAccountIDs(ctx, plan, nil)
 	require.NoError(t, err)
 	require.Equal(t, []int64{62, 63}, ids)
+	plan.AccountIDs = []int64{62, 63}
+	plan.ExcludedAccountIDs = []int64{63}
+	plan, err = plans.Update(ctx, plan)
+	require.NoError(t, err)
+	ids, err = repo.ListPlanTargetAccountIDs(ctx, plan, nil)
+	require.NoError(t, err)
+	require.Equal(t, []int64{62}, ids, "explicit selections still respect exclusions")
+	plan.AccountIDs = []int64{63}
+	plan, err = plans.Update(ctx, plan)
+	require.NoError(t, err)
+	ids, err = repo.ListPlanTargetAccountIDs(ctx, plan, nil)
+	require.NoError(t, err)
+	require.Empty(t, ids, "an excluded selection cannot run")
+	_, err = repo.BeginRun(ctx, plan, "unselected-injected", genericRoundInputs(plan, []int64{62}, started.Add(2*time.Minute)))
+	require.Error(t, err, "snapshot must reject an unselected account even if discovery is bypassed")
 }

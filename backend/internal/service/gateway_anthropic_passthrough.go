@@ -562,8 +562,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			writeResponseHeaders()
 			var output strings.Builder
 			for _, line := range eventLines {
-				output.Write(reverseToolNamesIfPresent(c, []byte(line)))
-				output.WriteByte('\n')
+				_, _ = output.Write(reverseToolNamesIfPresent(c, []byte(line)))
+				_ = output.WriteByte('\n')
 			}
 			if _, err := io.WriteString(w, output.String()); err != nil {
 				clientDisconnected = true

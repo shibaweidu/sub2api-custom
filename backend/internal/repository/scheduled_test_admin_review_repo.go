@@ -45,7 +45,7 @@ func (r *scheduledTestResultRepository) ListAdminReviews(ctx context.Context) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	results := make([]*service.ScheduledTestAdminReview, 0)
 	for rows.Next() {
 		out := &service.ScheduledTestAdminReview{Result: &service.ScheduledTestResult{}}
@@ -83,7 +83,7 @@ func (r *scheduledTestResultRepository) DecideTestResult(ctx context.Context, ad
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	config, err := lockProtectionPlan(ctx, tx, planID)
 	if err != nil {
 		return adminReviewError(err)

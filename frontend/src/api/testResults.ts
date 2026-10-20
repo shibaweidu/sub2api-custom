@@ -6,14 +6,21 @@ export async function list(limit = 3): Promise<TestResult[]> {
   return data ?? []
 }
 
+export async function listForGroup(groupID: number, limit?: number): Promise<TestResult[]> {
+  const { data } = await apiClient.get<TestResult[]>('/user/test-results', {
+    params: { group_id: groupID, ...(limit ? { limit } : {}) },
+  })
+  return data ?? []
+}
+
 export interface TestResultHistory {
   items: TestResult[]
   next_before_id?: number
 }
 
-export async function history(id: number, beforeId?: number): Promise<TestResultHistory> {
+export async function history(id: number, beforeId?: number, groupID?: number): Promise<TestResultHistory> {
   const { data } = await apiClient.get<TestResultHistory>(`/user/test-results/${id}/history`, {
-    params: { limit: 20, before_id: beforeId },
+    params: { limit: 20, before_id: beforeId, ...(groupID ? { group_id: groupID } : {}) },
   })
   return data
 }
@@ -28,7 +35,7 @@ export async function vote(id: number, vote: TestVote): Promise<TestVoteResult> 
   return data
 }
 
-export const testResultsAPI = { list, history, votes, vote }
+export const testResultsAPI = { list, listForGroup, history, votes, vote }
 export default testResultsAPI
 
 /** All completed checks in each authorized current group, without a preview limit. */

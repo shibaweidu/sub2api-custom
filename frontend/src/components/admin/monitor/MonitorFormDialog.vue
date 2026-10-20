@@ -52,6 +52,39 @@
       </div>
 
       <!-- 配额模式数据源：关联账号（复用账号侧用量/余额服务） -->
+      <div v-if="usesProbePart">
+        <div class="flex items-center justify-between gap-3">
+          <label class="input-label">{{ t('admin.channelMonitor.form.probeAccount') }}</label>
+          <button
+            v-if="form.probe_account_id != null"
+            type="button"
+            data-testid="monitor-probe-account-reset"
+            class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+            @click="resetProbeAccountToDefault"
+          >
+            {{ t('admin.channelMonitor.form.probeAccountReset') }}
+          </button>
+        </div>
+        <div data-testid="monitor-probe-account">
+          <Select
+            v-model="probeAccountSelectValue"
+            :options="probeAccountOptions"
+            :placeholder="t('admin.channelMonitor.form.probeAccountPlaceholder')"
+            remote
+            :loading="probeAccountsLoading"
+            @search="onProbeAccountSearch"
+            @open-change="onProbeAccountOpen"
+          />
+        </div>
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.probeAccountHint') }}</p>
+        <p v-if="selectedProbeKeyGroupId != null" class="mt-1 text-xs text-blue-600 dark:text-blue-400">
+          {{ t('admin.channelMonitor.form.probeAccountGroupHint', { group: selectedProbeKeyGroupName || `#${selectedProbeKeyGroupId}` }) }}
+        </p>
+        <p v-if="probeAccountHydrationFailed" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          {{ t('admin.channelMonitor.form.probeAccountMissing') }}
+        </p>
+      </div>
+
       <div v-if="usesQuotaMode">
         <label class="input-label">
           {{ t('admin.channelMonitor.form.linkedAccount') }} <span class="text-red-500">*</span>
@@ -151,6 +184,12 @@
       <div>
         <label class="input-label">{{ t('admin.channelMonitor.form.groupName') }}</label>
         <input v-model="form.group_name" type="text" class="input" :placeholder="t('admin.channelMonitor.form.groupNamePlaceholder')" />
+      </div>
+
+      <div>
+        <label class="input-label">{{ t('admin.channelMonitor.form.qualityGroup') }}</label>
+        <Select data-testid="quality-group-select" v-model="qualityGroupSelectValue" :options="qualityGroupOptions" :placeholder="t('admin.channelMonitor.form.qualityGroupPlaceholder')" :loading="qualityGroupsLoading" />
+        <p class="mt-1 text-xs text-gray-400">{{ t('admin.channelMonitor.form.qualityGroupHint') }}</p>
       </div>
 
       <div>
@@ -317,6 +356,12 @@ const showKeyPicker = ref(false)
 const myKeysLoading = ref(false)
 const myActiveKeys = ref<ApiKey[]>([])
 const userGroupRates = ref<Record<number, number>>({})
+// A key selected from the picker carries its primary group. Keep that group
+// separate from the raw key field so the probe-channel list can be restricted
+// without ever trying to resolve a manually typed secret in the browser.
+const selectedProbeKeyGroupId = ref<number | null>(null)
+const selectedProbeKeyGroupName = ref('')
+const selectedProbeKeyValue = ref('')
 
 interface MonitorForm {
   name: string
@@ -324,6 +369,8 @@ interface MonitorForm {
   api_mode: APIMode
   check_mode: CheckMode
   account_id: number | null
+  probe_account_id: number | null
+  quality_group_id: number | null
   endpoint: string
   api_key: string
   primary_model: string
@@ -345,6 +392,8 @@ const form = reactive<MonitorForm>({
   api_mode: API_MODE_CHAT_COMPLETIONS,
   check_mode: CHECK_MODE_PROBE,
   account_id: null,
+  probe_account_id: null,
+  quality_group_id: null,
   endpoint: '',
   api_key: '',
   primary_model: '',
@@ -371,6 +420,36 @@ let suppressFormWatchers = false
 // 可用模板列表（进入 dialog 时一次性拉取 cache；按 provider / api mode 过滤）。
 const templatesCache = ref<ChannelMonitorTemplate[]>([])
 const templatesLoading = ref(false)
+const qualityGroupsLoading = ref(false)
+const qualityGroups = ref<{ id: number; name: string }[]>([])
+const qualityGroupOptions = computed(() => [
+  { value: '', label: t('admin.channelMonitor.form.qualityGroupNone') },
+  ...qualityGroups.value.map(group => ({ value: String(group.id), label: group.name })),
+])
+const qualityGroupSelectValue = computed<string>({
+  get: () => form.quality_group_id == null ? '' : String(form.quality_group_id),
+  set: raw => {
+    if (raw === '') form.quality_group_id = null
+    else {
+      const id = Number(raw)
+      if (Number.isSafeInteger(id) && id > 0) form.quality_group_id = id
+    }
+  },
+})
+async function loadQualityGroups() {
+  if (qualityGroups.value.length || qualityGroupsLoading.value) return
+  if (!adminAPI.tests?.listPlans || !adminAPI.groups?.getAll) return
+  qualityGroupsLoading.value = true
+  try {
+    const [plans, groups] = await Promise.all([adminAPI.tests.listPlans(), adminAPI.groups.getAll()])
+    const configuredIDs = new Set(plans.flatMap(plan => plan.group_ids || []))
+    qualityGroups.value = groups.filter(group => configuredIDs.has(group.id)).map(group => ({ id: group.id, name: group.name }))
+  } catch (error) {
+    console.warn('load quality test groups failed', error)
+  } finally {
+    qualityGroupsLoading.value = false
+  }
+}
 
 const templateOptions = computed(() => {
   const items = templatesCache.value.filter((t) => {
@@ -565,6 +644,113 @@ const accountOptions = computed(() => {
   return opts
 })
 
+// 探活渠道选择器：与配额数据源 account_id 分开，探活时只读取该账号的 endpoint/凭据。
+const probeAccounts = ref<LinkedAccount[]>([])
+const probeAccountsLoading = ref(false)
+const probeAccountHydrationFailed = ref(false)
+const pinnedProbeAccount = ref<LinkedAccount | null>(null)
+let probeAccountSearchSeq = 0
+let probeAccountSearchAbort: AbortController | null = null
+const probeHydrationAttempted = new Set<number>()
+
+const probeAccountOptions = computed(() => {
+  const opts = probeAccounts.value.map((a) => ({ value: String(a.id), label: `${a.name} (#${a.id})` }))
+  const pinned = pinnedProbeAccount.value
+  if (pinned && !probeAccounts.value.some((a) => a.id === pinned.id)) {
+    opts.unshift({ value: String(pinned.id), label: `${pinned.name} (#${pinned.id})` })
+  }
+  return opts
+})
+
+const probeAccountSelectValue = computed<string>({
+  get: () => (form.probe_account_id == null ? '' : String(form.probe_account_id)),
+  set: (raw: string) => {
+    if (raw === '') {
+      form.probe_account_id = null
+      pinnedProbeAccount.value = null
+      probeAccountHydrationFailed.value = false
+      return
+    }
+    const id = Number(raw)
+    if (Number.isFinite(id)) {
+      form.probe_account_id = id
+      pinnedProbeAccount.value = probeAccounts.value.find((a) => a.id === id) ?? pinnedProbeAccount.value
+    }
+  },
+})
+
+async function loadProbeAccounts(search = '') {
+  if (!usesProbePart.value || !props.show) return
+  const seq = ++probeAccountSearchSeq
+  probeAccountSearchAbort?.abort()
+  const controller = new AbortController()
+  probeAccountSearchAbort = controller
+  probeAccountsLoading.value = true
+  try {
+    const groupFilter = selectedProbeKeyGroupId.value == null
+      ? {}
+      : { group: String(selectedProbeKeyGroupId.value) }
+    const res = await adminAPI.accounts.list(
+      1,
+      50,
+      { platform: form.provider, ...groupFilter, ...(search ? { search } : {}) },
+      { signal: controller.signal },
+    )
+    if (seq !== probeAccountSearchSeq) return
+    probeAccounts.value = (res.items || []).map((a) => ({ id: a.id, name: a.name }))
+    await ensureSelectedProbeAccountHydrated()
+  } catch (err: unknown) {
+    if (controller.signal.aborted) return
+    console.warn('load probe accounts failed', err)
+    if (!search) probeAccounts.value = []
+  } finally {
+    if (seq === probeAccountSearchSeq) probeAccountsLoading.value = false
+  }
+}
+
+async function ensureSelectedProbeAccountHydrated() {
+  const id = form.probe_account_id
+  if (id == null || !usesProbePart.value) return
+  if (probeAccounts.value.some((a) => a.id === id)) return
+  if (probeHydrationAttempted.has(id)) return
+  probeHydrationAttempted.add(id)
+  try {
+    const account = await adminAPI.accounts.getById(id)
+    if (form.probe_account_id !== id) return
+    const accountGroupIDs = [
+      ...(account.group_ids || []),
+      ...((account.groups || []).map((group) => group.id)),
+    ]
+    const selectedGroupMatches =
+      selectedProbeKeyGroupId.value == null || accountGroupIDs.includes(selectedProbeKeyGroupId.value)
+    if (String(account.platform) !== form.provider || !selectedGroupMatches) {
+      form.probe_account_id = null
+      pinnedProbeAccount.value = null
+      probeAccountHydrationFailed.value = true
+      return
+    }
+    pinnedProbeAccount.value = { id: account.id, name: account.name }
+  } catch {
+    if (form.probe_account_id === id) {
+      form.probe_account_id = null
+      pinnedProbeAccount.value = null
+      probeAccountHydrationFailed.value = true
+    }
+  }
+}
+
+function onProbeAccountSearch(query: string) {
+  void loadProbeAccounts(query)
+}
+
+function onProbeAccountOpen(open: boolean) {
+  if (open && probeAccounts.value.length === 0) void loadProbeAccounts()
+}
+
+function resetProbeAccountToDefault() {
+  probeAccountSelectValue.value = ''
+}
+
 // Select 组件绑定 string，与 number | null 互转。
 const accountSelectValue = computed<string>({
   get: () => (form.account_id == null ? '' : String(form.account_id)),
@@ -651,6 +837,7 @@ watch(
     const [prevShow, prevProvider] = prev ?? []
     if (!show) {
       accountSearchAbort?.abort()
+      probeAccountSearchAbort?.abort()
       return
     }
     // 弹窗重开 / provider 真正变化时重置回填状态（check_mode 变化不重置，
@@ -659,8 +846,15 @@ watch(
       hydrationAttempted.clear()
       accountHydrationFailed.value = false
       pinnedAccount.value = null
+      probeAccountSearchSeq += 1
+      probeAccountSearchAbort?.abort()
+      probeAccounts.value = []
+      probeHydrationAttempted.clear()
+      probeAccountHydrationFailed.value = false
+      pinnedProbeAccount.value = null
     }
     void loadLinkedAccounts()
+    if (form.probe_account_id != null) void loadProbeAccounts()
   },
   { immediate: true },
 )
@@ -674,11 +868,22 @@ function selectProvider(provider: Provider) {
     previousProvider === PROVIDER_GROK && form.primary_model === DEFAULT_GROK_MODEL
   const clearPrevDefaultEndpoint =
     !!PROVIDER_DEFAULT_ENDPOINTS[previousProvider] && form.endpoint === PROVIDER_DEFAULT_ENDPOINTS[previousProvider]
+  selectedProbeKeyGroupId.value = null
+  selectedProbeKeyGroupName.value = ''
+  selectedProbeKeyValue.value = ''
+  probeAccountSearchSeq += 1
+  probeAccountSearchAbort?.abort()
+  probeAccounts.value = []
+  probeHydrationAttempted.clear()
   form.provider = provider
   // 关联账号与平台绑定：切换 provider 时显式清空（这是唯一主动清空的入口）。
   form.account_id = null
+  form.probe_account_id = null
+  form.quality_group_id = null
   pinnedAccount.value = null
   accountHydrationFailed.value = false
+  pinnedProbeAccount.value = null
+  probeAccountHydrationFailed.value = false
   // antigravity 仅配额模式：切到它时强制 quota（checkModeOptions 同步禁用其余项）。
   if (provider === PROVIDER_ANTIGRAVITY && form.check_mode !== CHECK_MODE_QUOTA) {
     form.check_mode = CHECK_MODE_QUOTA
@@ -716,6 +921,21 @@ watch(() => form.provider, () => {
   clearRequestSnapshot()
 }, { flush: 'sync' })
 
+watch(() => form.api_key, (value) => {
+  if (suppressFormWatchers || value === selectedProbeKeyValue.value) return
+  const hadGroupFilter = selectedProbeKeyGroupId.value != null
+  selectedProbeKeyGroupId.value = null
+  selectedProbeKeyGroupName.value = ''
+  selectedProbeKeyValue.value = ''
+  if (hadGroupFilter && usesProbePart.value) {
+    probeHydrationAttempted.clear()
+    probeAccounts.value = []
+    pinnedProbeAccount.value = null
+    probeAccountHydrationFailed.value = false
+    void loadProbeAccounts()
+  }
+}, { flush: 'sync' })
+
 watch(() => form.api_mode, () => {
   if (suppressFormWatchers) return
   if (form.provider === PROVIDER_OPENAI) {
@@ -725,13 +945,19 @@ watch(() => form.api_mode, () => {
 
 function resetForm() {
   suppressFormWatchers = true
+  selectedProbeKeyGroupId.value = null
+  selectedProbeKeyGroupName.value = ''
+  selectedProbeKeyValue.value = ''
   form.name = ''
   form.provider = PROVIDER_ANTHROPIC
   form.api_mode = API_MODE_CHAT_COMPLETIONS
   form.check_mode = CHECK_MODE_PROBE
   form.account_id = null
+  form.probe_account_id = null
   pinnedAccount.value = null
   accountHydrationFailed.value = false
+  pinnedProbeAccount.value = null
+  probeAccountHydrationFailed.value = false
   form.endpoint = ''
   form.api_key = ''
   form.primary_model = ''
@@ -749,11 +975,16 @@ function resetForm() {
 
 function loadFromMonitor(m: ChannelMonitor) {
   suppressFormWatchers = true
+  selectedProbeKeyGroupId.value = null
+  selectedProbeKeyGroupName.value = ''
+  selectedProbeKeyValue.value = ''
   form.name = m.name
   form.provider = m.provider
   form.api_mode = normalizeAPIMode(m.api_mode)
   form.check_mode = m.check_mode || CHECK_MODE_PROBE
   form.account_id = m.account_id ?? null
+  form.probe_account_id = m.probe_account_id ?? null
+  form.quality_group_id = m.quality_group_id ?? null
   form.endpoint = m.endpoint
   form.api_key = ''
   form.primary_model = m.primary_model
@@ -776,6 +1007,7 @@ watch(
   ([show, m]) => {
     if (!show) return
     void loadTemplates()
+    void loadQualityGroups()
     if (m) loadFromMonitor(m)
     else resetForm()
   },
@@ -811,7 +1043,15 @@ async function openMyKeyPicker() {
 }
 
 function pickMyKey(k: ApiKey) {
+  selectedProbeKeyGroupId.value = k.group_id ?? null
+  selectedProbeKeyGroupName.value = k.group?.name || ''
+  selectedProbeKeyValue.value = k.key
   form.api_key = k.key
+  probeHydrationAttempted.clear()
+  probeAccounts.value = []
+  pinnedProbeAccount.value = null
+  probeAccountHydrationFailed.value = false
+  if (usesProbePart.value) void loadProbeAccounts()
   showKeyPicker.value = false
 }
 
@@ -822,6 +1062,8 @@ function buildPayload(): CreateParams {
     api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
     check_mode: form.check_mode,
     account_id: usesQuotaMode.value ? form.account_id : null,
+    probe_account_id: usesProbePart.value ? form.probe_account_id : null,
+    quality_group_id: form.quality_group_id,
     endpoint: usesProbePart.value ? form.endpoint.trim() : '',
     api_key: usesProbePart.value ? form.api_key.trim() : '',
     primary_model: usesProbePart.value ? form.primary_model.trim() : 'quota',
@@ -868,6 +1110,9 @@ async function handleSubmit() {
       // account_id 同理：probe 模式不带账号，update 发 0 显式解绑存量关联
       // （后端 0=清空、null=不动）。仅 update——create 发 0 会落 &0 触发 FK 违约。
       if (!usesQuotaMode.value) req.account_id = 0
+      // probe_account_id 同理：0 显式解绑存量探测渠道，null 仅表示不更新。
+      req.probe_account_id = usesProbePart.value ? (form.probe_account_id ?? 0) : 0
+      req.quality_group_id = form.quality_group_id ?? 0
       await adminAPI.channelMonitor.update(target.id, req)
       appStore.showSuccess(t('admin.channelMonitor.updateSuccess'))
     } else {

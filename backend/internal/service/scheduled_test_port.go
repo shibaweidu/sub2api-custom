@@ -12,6 +12,8 @@ type ScheduledTestPlan struct {
 	// SortOrder orders strategies; GroupIDs orders groups within a strategy.
 	// A round snapshots the union of these groups once, deduplicated by account.
 	GroupIDs           []int64                       `json:"group_ids"`
+	AccountIDs         []int64                       `json:"account_ids"`
+	AutoPublishResults bool                          `json:"auto_publish_results"`
 	ExcludedAccountIDs []int64                       `json:"excluded_account_ids"`
 	MigrationNote      string                        `json:"migration_note,omitempty"`
 	SortOrder          int                           `json:"sort_order"`
@@ -40,6 +42,7 @@ type ScheduledTestResult struct {
 	ExecutionInfo    *ScheduledTestExecutionInfo `json:"execution_info,omitempty"`
 	RunID            string                      `json:"-"`
 	ID               int64                       `json:"id"`
+	Published        bool                        `json:"published"`
 	PlanID           int64                       `json:"plan_id"`
 	TestDefinitionID *int64                      `json:"test_definition_id,omitempty"`
 	PlanName         string                      `json:"plan_name"`
@@ -96,6 +99,10 @@ type ScheduledTestProtectionDecision struct {
 // upstream work begins, including records waiting for a worker.
 type ScheduledTestRunRepository interface {
 	BeginRun(context.Context, *ScheduledTestPlan, string, []*ScheduledTestResult) ([]*ScheduledTestResult, error)
+}
+
+type ScheduledTestResultPublishingRepository interface {
+	SetPublished(context.Context, int64, bool) error
 }
 
 type ScheduledTestDecisionRepository interface {
@@ -194,6 +201,22 @@ type ScheduledTestResultRepository interface {
 	ListVisibleHistory(ctx context.Context, userID, resultID, beforeID int64, limit int) ([]*ScheduledTestResult, error)
 	Delete(ctx context.Context, id int64) error
 	PruneOldResults(ctx context.Context, planID int64, keepCount int) error
+}
+
+type ScheduledTestGroupResultRepository interface {
+	ListVisibleLatestForGroup(context.Context, int64, int64, int) ([]*ScheduledTestResult, error)
+}
+
+type ScheduledTestGroupResultListRepository interface {
+	ListVisibleForGroup(context.Context, int64, int64) ([]*ScheduledTestResult, error)
+}
+
+type ScheduledTestGroupRecentResultRepository interface {
+	ListVisibleRecentForGroup(context.Context, int64, int64, int) ([]*ScheduledTestResult, error)
+}
+
+type ScheduledTestGroupHistoryRepository interface {
+	ListVisibleHistoryForGroup(context.Context, int64, int64, int64, int64, int) ([]*ScheduledTestResult, error)
 }
 
 // ScheduledTestTargetAccountRepository returns all configured target accounts

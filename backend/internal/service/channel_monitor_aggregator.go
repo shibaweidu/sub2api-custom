@@ -235,6 +235,7 @@ func buildUserViewFromSummary(
 		Name:             m.Name,
 		Provider:         m.Provider,
 		GroupName:        m.GroupName,
+		QualityGroupID:   m.QualityGroupID,
 		PrimaryModel:     m.PrimaryModel,
 		PrimaryStatus:    summary.PrimaryStatus,
 		PrimaryLatencyMs: summary.PrimaryLatencyMs,

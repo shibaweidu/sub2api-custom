@@ -110,10 +110,13 @@ export async function listResults(planId: number, limit = 50): Promise<TestResul
 export async function deleteResult(id: number): Promise<void> {
   await apiClient.delete(`/admin/test-results/${id}`)
 }
+export async function setResultPublished(id: number, published: boolean): Promise<void> {
+  await apiClient.put(`/admin/test-results/${id}/publish`, { published })
+}
 export async function retryResult(id: number): Promise<TestResult> {
   const { data } = await apiClient.post<TestResult>(`/admin/test-results/${id}/retry`)
   return data
 }
 
-export const testsAPI = { listTypes, createType, updateType, deleteType, listPlans, createPlan, updatePlan, deletePlan, runPlan, listResults, deleteResult, retryResult, listReviews, decideResult, getAccountProtection }
+export const testsAPI = { listTypes, createType, updateType, deleteType, listPlans, createPlan, updatePlan, deletePlan, runPlan, listResults, deleteResult, setResultPublished, retryResult, listReviews, decideResult, getAccountProtection }
 export default testsAPI

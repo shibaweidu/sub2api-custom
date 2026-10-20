@@ -80,7 +80,7 @@ func (r *scheduledTestResultRepository) ListDetectionAccountIDs(ctx context.Cont
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := make([]int64, 0)
 	for rows.Next() {
 		var id int64
@@ -100,7 +100,7 @@ func (r *scheduledTestResultRepository) BeginProtection(ctx context.Context, res
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	config, err := lockProtectionPlan(ctx, tx, result.PlanID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -335,7 +335,7 @@ func (r *scheduledTestResultRepository) CompleteProtection(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	config, err := lockProtectionPlan(ctx, tx, result.PlanID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -413,7 +413,7 @@ func (r *scheduledTestResultRepository) ClearPlanProtection(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := clearPlanProtectionTx(ctx, tx, planID); err != nil {
 		return err
 	}
@@ -440,13 +440,13 @@ func resetPlanProtectionTx(ctx context.Context, tx *sql.Tx, planID int64) error 
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		ids = append(ids, id)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -512,6 +512,7 @@ const protectionVotingQuery = `SELECT ` + protectionVoteResultJSON + `,s.rule_co
 	     WHERE current_rule->>'test_definition_id'=s.test_definition_id::text
 	     AND current_rule->'vote'->>'enabled'='true' AND current_rule->'vote'->>'public_enabled'='true')
 	 AND s.completed AND r.status IN ('success','passed')
+	 AND r.published
 	 AND r.started_at=s.result_started_at AND r.started_at>=s.round_started_at
 	 AND (NULLIF(BTRIM(r.response_text),'') IS NOT NULL OR NULLIF(BTRIM(r.output_html),'') IS NOT NULL OR r.output_numeric IS NOT NULL)
 	 AND a.deleted_at IS NULL AND a.schedulable=TRUE AND a.status IN ('active','quality_paused')
@@ -557,7 +558,7 @@ func (r *scheduledTestResultRepository) ListVotingResults(ctx context.Context, u
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanProtectionVoting(rows)
 }
 
@@ -576,7 +577,7 @@ func (r *scheduledTestResultRepository) CastTestVote(ctx context.Context, userID
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	config, err := lockProtectionPlan(ctx, tx, planID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, service.ErrScheduledTestVoteUnavailable
@@ -627,7 +628,7 @@ func (r *scheduledTestResultRepository) CastTestVote(ctx context.Context, userID
 		return nil, err
 	}
 	results, err := scanProtectionVoting(rows)
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -648,7 +649,7 @@ func (r *scheduledTestResultRepository) CastTestVote(ctx context.Context, userID
 		return nil, err
 	}
 	results, err = scanProtectionVoting(rows)
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}

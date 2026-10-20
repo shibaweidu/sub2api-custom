@@ -524,6 +524,9 @@ export default {
 
   // Shared keys for channel monitor (admin + user views)
   monitorCommon: {
+    qualityChecks: '降智检测',
+    viewQualityChecks: '查看检测',
+    qualityChecksEmpty: '暂无已发布结果',
     status: {
       operational: '正常',
       degraded: '降级',

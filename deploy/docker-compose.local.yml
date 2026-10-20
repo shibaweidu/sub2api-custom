@@ -25,6 +25,8 @@ services:
   # ===========================================================================
   sub2api:
     image: weishaw/sub2api:latest
+    # Preserve the existing production container name for operational tooling.
+    container_name: sub2api
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

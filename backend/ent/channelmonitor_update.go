@@ -107,6 +107,60 @@ func (_u *ChannelMonitorUpdate) ClearAccountID() *ChannelMonitorUpdate {
 	return _u
 }
 
+// SetProbeAccountID sets the "probe_account_id" field.
+func (_u *ChannelMonitorUpdate) SetProbeAccountID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.ResetProbeAccountID()
+	_u.mutation.SetProbeAccountID(v)
+	return _u
+}
+
+// SetNillableProbeAccountID sets the "probe_account_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdate) SetNillableProbeAccountID(v *int64) *ChannelMonitorUpdate {
+	if v != nil {
+		_u.SetProbeAccountID(*v)
+	}
+	return _u
+}
+
+// AddProbeAccountID adds value to the "probe_account_id" field.
+func (_u *ChannelMonitorUpdate) AddProbeAccountID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.AddProbeAccountID(v)
+	return _u
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (_u *ChannelMonitorUpdate) ClearProbeAccountID() *ChannelMonitorUpdate {
+	_u.mutation.ClearProbeAccountID()
+	return _u
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (_u *ChannelMonitorUpdate) SetQualityGroupID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.ResetQualityGroupID()
+	_u.mutation.SetQualityGroupID(v)
+	return _u
+}
+
+// SetNillableQualityGroupID sets the "quality_group_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdate) SetNillableQualityGroupID(v *int64) *ChannelMonitorUpdate {
+	if v != nil {
+		_u.SetQualityGroupID(*v)
+	}
+	return _u
+}
+
+// AddQualityGroupID adds value to the "quality_group_id" field.
+func (_u *ChannelMonitorUpdate) AddQualityGroupID(v int64) *ChannelMonitorUpdate {
+	_u.mutation.AddQualityGroupID(v)
+	return _u
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (_u *ChannelMonitorUpdate) ClearQualityGroupID() *ChannelMonitorUpdate {
+	_u.mutation.ClearQualityGroupID()
+	return _u
+}
+
 // SetAPIMode sets the "api_mode" field.
 func (_u *ChannelMonitorUpdate) SetAPIMode(v string) *ChannelMonitorUpdate {
 	_u.mutation.SetAPIMode(v)
@@ -575,6 +629,24 @@ func (_u *ChannelMonitorUpdate) sqlSave(ctx context.Context) (_node int, err err
 	if _u.mutation.AccountIDCleared() {
 		_spec.ClearField(channelmonitor.FieldAccountID, field.TypeInt64)
 	}
+	if value, ok := _u.mutation.ProbeAccountID(); ok {
+		_spec.SetField(channelmonitor.FieldProbeAccountID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedProbeAccountID(); ok {
+		_spec.AddField(channelmonitor.FieldProbeAccountID, field.TypeInt64, value)
+	}
+	if _u.mutation.ProbeAccountIDCleared() {
+		_spec.ClearField(channelmonitor.FieldProbeAccountID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.QualityGroupID(); ok {
+		_spec.SetField(channelmonitor.FieldQualityGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQualityGroupID(); ok {
+		_spec.AddField(channelmonitor.FieldQualityGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.QualityGroupIDCleared() {
+		_spec.ClearField(channelmonitor.FieldQualityGroupID, field.TypeInt64)
+	}
 	if value, ok := _u.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
 	}
@@ -851,6 +923,60 @@ func (_u *ChannelMonitorUpdateOne) AddAccountID(v int64) *ChannelMonitorUpdateOn
 // ClearAccountID clears the value of the "account_id" field.
 func (_u *ChannelMonitorUpdateOne) ClearAccountID() *ChannelMonitorUpdateOne {
 	_u.mutation.ClearAccountID()
+	return _u
+}
+
+// SetProbeAccountID sets the "probe_account_id" field.
+func (_u *ChannelMonitorUpdateOne) SetProbeAccountID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.ResetProbeAccountID()
+	_u.mutation.SetProbeAccountID(v)
+	return _u
+}
+
+// SetNillableProbeAccountID sets the "probe_account_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdateOne) SetNillableProbeAccountID(v *int64) *ChannelMonitorUpdateOne {
+	if v != nil {
+		_u.SetProbeAccountID(*v)
+	}
+	return _u
+}
+
+// AddProbeAccountID adds value to the "probe_account_id" field.
+func (_u *ChannelMonitorUpdateOne) AddProbeAccountID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.AddProbeAccountID(v)
+	return _u
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (_u *ChannelMonitorUpdateOne) ClearProbeAccountID() *ChannelMonitorUpdateOne {
+	_u.mutation.ClearProbeAccountID()
+	return _u
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (_u *ChannelMonitorUpdateOne) SetQualityGroupID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.ResetQualityGroupID()
+	_u.mutation.SetQualityGroupID(v)
+	return _u
+}
+
+// SetNillableQualityGroupID sets the "quality_group_id" field if the given value is not nil.
+func (_u *ChannelMonitorUpdateOne) SetNillableQualityGroupID(v *int64) *ChannelMonitorUpdateOne {
+	if v != nil {
+		_u.SetQualityGroupID(*v)
+	}
+	return _u
+}
+
+// AddQualityGroupID adds value to the "quality_group_id" field.
+func (_u *ChannelMonitorUpdateOne) AddQualityGroupID(v int64) *ChannelMonitorUpdateOne {
+	_u.mutation.AddQualityGroupID(v)
+	return _u
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (_u *ChannelMonitorUpdateOne) ClearQualityGroupID() *ChannelMonitorUpdateOne {
+	_u.mutation.ClearQualityGroupID()
 	return _u
 }
 
@@ -1351,6 +1477,24 @@ func (_u *ChannelMonitorUpdateOne) sqlSave(ctx context.Context) (_node *ChannelM
 	}
 	if _u.mutation.AccountIDCleared() {
 		_spec.ClearField(channelmonitor.FieldAccountID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.ProbeAccountID(); ok {
+		_spec.SetField(channelmonitor.FieldProbeAccountID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedProbeAccountID(); ok {
+		_spec.AddField(channelmonitor.FieldProbeAccountID, field.TypeInt64, value)
+	}
+	if _u.mutation.ProbeAccountIDCleared() {
+		_spec.ClearField(channelmonitor.FieldProbeAccountID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.QualityGroupID(); ok {
+		_spec.SetField(channelmonitor.FieldQualityGroupID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQualityGroupID(); ok {
+		_spec.AddField(channelmonitor.FieldQualityGroupID, field.TypeInt64, value)
+	}
+	if _u.mutation.QualityGroupIDCleared() {
+		_spec.ClearField(channelmonitor.FieldQualityGroupID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)

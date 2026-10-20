@@ -32,7 +32,8 @@ func TestUpstreamBillingRateLimitSchedulingAndRecovery(t *testing.T) {
 	require.True(t, account.IsUpstreamBillingRateLimited())
 	require.False(t, account.IsSchedulable())
 	require.True(t, account.Schedulable, "automatic protection must not overwrite the manual switch")
-	snapshot := account.Extra[UpstreamBillingProbeExtraKey].(*UpstreamBillingProbeSnapshot)
+	snapshot, ok := account.Extra[UpstreamBillingProbeExtraKey].(*UpstreamBillingProbeSnapshot)
+	require.True(t, ok)
 	snapshot.Status = UpstreamBillingProbeStatusFailed
 	expired := time.Now().Add(-time.Hour)
 	snapshot.FreshUntil = &expired
@@ -62,7 +63,8 @@ func TestUpstreamBillingRateLimitSchedulingAndRecovery(t *testing.T) {
 
 func TestUpstreamBillingRateLimitRecomputesPeakWindow(t *testing.T) {
 	account := rateLimitedTestAccount(1, 1, 0.75)
-	snapshot := account.Extra[UpstreamBillingProbeExtraKey].(*UpstreamBillingProbeSnapshot)
+	snapshot, ok := account.Extra[UpstreamBillingProbeExtraKey].(*UpstreamBillingProbeSnapshot)
+	require.True(t, ok)
 	snapshot.Data["peak_rate_enabled"] = true
 	snapshot.Data["peak_start"] = "09:00"
 	snapshot.Data["peak_end"] = "18:00"

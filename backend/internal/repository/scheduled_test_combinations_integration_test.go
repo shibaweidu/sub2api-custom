@@ -19,6 +19,7 @@ func combinedTestLeaf(id int64, verdict string) service.ScheduledTestCombination
 
 func combinedRoutingPlan(candyID, pelicanID int64) *service.ScheduledTestPlan {
 	p := genericRoutingPlan(candyID, 8, 10, 11)
+	p.AutoPublishResults = true
 	p.Protection.Mode = "combined"
 	p.TestDefinitionIDs = []int64{candyID, pelicanID}
 	// These deliberately conflicting legacy actions must remain inactive in

@@ -108,21 +108,21 @@ func (r *scheduledTestResultRepository) AdvanceCacheRecovery(ctx context.Context
 		var c cacheRecoveryCandidate
 		var raw, protection []byte
 		if err := rows.Scan(&c.planID, &c.accountID, &c.definitionID, &c.phase, &c.trialStarted, &c.trialEnds, &raw, &c.plan.GroupID, &c.plan.ModelID, &protection); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(raw, &c.rule); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(protection, &c.plan.Protection); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		candidates = append(candidates, c)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (r *scheduledTestResultRepository) advanceCacheRecoveryCandidate(ctx contex
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	config, err := lockProtectionPlan(ctx, tx, c.planID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil

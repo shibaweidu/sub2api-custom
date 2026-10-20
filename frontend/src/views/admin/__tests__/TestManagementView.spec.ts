@@ -718,6 +718,27 @@ describe('general strategies across ordered groups', () => {
     wrapper.unmount()
   })
 
+  it('selects only chosen channels and saves immediate publication preference', async () => {
+    api.getGroups.mockResolvedValue(strategyGroups)
+    api.getAccounts.mockResolvedValue({ items: [
+      { id: 31, name: 'Chosen channel', group_ids: [8] },
+      { id: 32, name: 'Another selected group', group_ids: [9] },
+      { id: 33, name: 'Outside groups', group_ids: [11] },
+    ], pages: 1, total: 3 })
+    api.listPlans.mockResolvedValue([{ ...plan, group_ids: [8, 9] }])
+    const wrapper = makeWrapper(); await flushPromises()
+    await wrapper.get('tbody button[aria-label="common.edit"]').trigger('click'); await flushPromises()
+    const channelPicker = wrapper.get('[data-plan-accounts]')
+    expect(channelPicker.text()).toContain('Chosen channel')
+    expect(channelPicker.text()).toContain('Another selected group')
+    expect(channelPicker.text()).not.toContain('Outside groups')
+    await channelPicker.get('input[value="31"]').setValue(true)
+    await wrapper.get('[data-auto-publish-results]').setValue(false)
+    await saveButton(wrapper).trigger('click'); await flushPromises()
+    expect(api.updatePlan).toHaveBeenCalledWith(10, expect.objectContaining({ account_ids: [31], auto_publish_results: false }))
+    wrapper.unmount()
+  })
+
   it('intersects supported models and reasoning levels across all groups', async () => {
     api.getGroups.mockResolvedValue(strategyGroups)
     api.listPlans.mockResolvedValue([{ ...plan, group_ids: [8, 9], model_id: 'gpt-6-astra', reasoning_effort: 'ultra' }])

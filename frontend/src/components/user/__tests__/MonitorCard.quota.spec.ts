@@ -1,16 +1,20 @@
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { UserMonitorView } from '@/api/channelMonitor'
 import MonitorCard from '../monitor/MonitorCard.vue'
 
-const { isQuotaVisible } = vi.hoisted(() => ({
+const { isQuotaVisible, routerPush, listQualityResults } = vi.hoisted(() => ({
   isQuotaVisible: vi.fn(() => false),
+  routerPush: vi.fn(),
+  listQualityResults: vi.fn(),
 }))
 
 vi.mock('@/utils/featureFlags', () => ({
   isChannelMonitorQuotaVisible: () => isQuotaVisible(),
 }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerPush }) }))
+vi.mock('@/api/testResults', () => ({ testResultsAPI: { listForGroup: listQualityResults } }))
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -50,6 +54,7 @@ function mountCard(item: UserMonitorView) {
         MonitorMetricPair: true,
         MonitorAvailabilityRow: true,
         MonitorTimeline: true,
+        TestResultOutput: { props: ['result'], template: '<div data-test-output>{{ result.response_text }}</div>' },
       },
     },
   })
@@ -99,5 +104,18 @@ describe('MonitorCard quota snapshot visibility', () => {
     const wrapper = mountCard(makeItem({ primary_model: 'claude-sonnet-4-5' }))
     expect(wrapper.text()).toContain('claude-sonnet-4-5')
     expect(wrapper.text()).not.toContain('monitorCommon.checkMode.quota')
+  })
+})
+
+describe('MonitorCard quality check link', () => {
+  it('loads up to four thumbnails and opens the linked result group', async () => {
+    listQualityResults.mockResolvedValue(Array.from({ length: 4 }, (_, index) => ({ id: index + 1, test_name: `Check ${index + 1}`, response_text: `Output ${index + 1}` })))
+    const wrapper = mountCard(makeItem({ quality_group_id: 8 }))
+    await flushPromises()
+    expect(listQualityResults).toHaveBeenCalledWith(8, 4)
+    expect(wrapper.findAll('[data-quality-result]')).toHaveLength(4)
+    expect(wrapper.text()).toContain('Output 4')
+    await wrapper.get('[data-quality-checks]').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/test-results', query: { group_id: '8' } })
   })
 })

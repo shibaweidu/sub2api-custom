@@ -676,6 +676,10 @@ func TestBackupService_CreateBackup_ConcurrentBlocked(t *testing.T) {
 	require.ErrorIs(t, err, ErrBackupInProgress)
 }
 
+func TestBackupScheduledLeaderLockOutlivesOperation(t *testing.T) {
+	require.Greater(t, backupScheduledLeaderLockTTL, backupOperationTimeout)
+}
+
 // TestBackupService_RunScheduledBackup_LeaderElection verifies the scheduled
 // backup is gated by a cross-instance leader lock: a non-leader instance skips
 // the dump entirely so a clustered deployment does not run N identical backups
@@ -1189,14 +1193,14 @@ func TestRecoverStaleRecords(t *testing.T) {
 	_ = svc.saveRecord(context.Background(), &BackupRecord{
 		ID:        "stale-1",
 		Status:    "running",
-		StartedAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	})
 	// 模拟一条孤立的恢复中记录
 	_ = svc.saveRecord(context.Background(), &BackupRecord{
 		ID:               "stale-2",
 		Status:           "completed",
 		RestoreStatus:    "running",
-		RestoreStartedAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		RestoreStartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 		StartedAt:        time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
 	})
 
@@ -1227,7 +1231,7 @@ func TestBackupService_RecoverStaleRecords_CleansBackupObjects(t *testing.T) {
 		ID:        "stale-parts",
 		Status:    "running",
 		Parts:     parts,
-		StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	}))
 
 	svc.recoverStaleRecords()
@@ -1255,7 +1259,7 @@ func TestBackupService_RecoverStaleRecords_PreservesKeysWhenCleanupFails(t *test
 		ID:        "stale-cleanup-failed",
 		Status:    "running",
 		Parts:     []BackupPart{part},
-		StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		StartedAt: time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339),
 	}))
 
 	svc.recoverStaleRecords()

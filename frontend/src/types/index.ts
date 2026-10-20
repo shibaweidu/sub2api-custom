@@ -2579,6 +2579,8 @@ export interface TestPlan {
   id: number
   /** Ordered strategy groups; this order is also used by the user result tabs. */
   group_ids: number[]
+  account_ids?: number[]
+  auto_publish_results?: boolean
   excluded_account_ids?: number[]
   migration_note?: string
   name?: string
@@ -2738,6 +2740,7 @@ export interface TestResult {
   /** Saved quality verdict; transport success does not imply a pass. */
   quality_verdict?: 'pass' | 'fail' | 'pending' | ''
   execution_info?: TestExecutionInfo | null
+  published?: boolean
   /** Current account status and scheduling switch; absent for account-free results. */
   account_schedulable?: boolean | null
   /** Returned only by administrator result endpoints. */
@@ -2753,6 +2756,8 @@ export interface TestResult {
   group_name?: string
   account_id?: number | null
   target_mode?: 'group' | 'all_accounts' | 'account'
+  /** Opaque per-response grouping key for public quality-result displays. */
+  result_set_id?: number | null
   id: number
   plan_id?: number
   test_definition_id?: number
@@ -2795,6 +2800,8 @@ export interface CreateTestPlanRequest {
   name?: string
   sort_order?: number
   group_ids: number[]
+  account_ids?: number[]
+  auto_publish_results?: boolean
   excluded_account_ids?: number[]
   test_definition_ids: number[]
   model_id: string

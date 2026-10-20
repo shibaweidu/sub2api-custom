@@ -1,8 +1,10 @@
 <template>
-  <button
-    type="button"
+  <div
+    role="button"
+    tabindex="0"
     class="group text-left p-5 rounded-2xl min-h-[280px] w-full bg-white/70 backdrop-blur-xl border border-gray-200/80 shadow-card dark:bg-dark-800/60 dark:border-dark-700/70 hover:-translate-y-1 hover:shadow-card-hover dark:hover:border-primary-500/30 hover:border-gray-300 transition-all duration-300 ease-out flex flex-col"
     @click="emit('click')"
+    @keydown="handleCardKeydown"
   >
     <!-- Header: icon + name/model + status chip -->
     <div class="flex items-start gap-3">
@@ -73,13 +75,42 @@
       :buckets="item.timeline"
       :countdown-seconds="countdownSeconds"
     />
-  </button>
+
+    <div
+      v-if="item.quality_group_id"
+      role="link"
+      tabindex="0"
+      type="button"
+      class="mt-3 border-t border-gray-100 pt-3 text-left dark:border-dark-700/60"
+      data-quality-checks
+      @click.stop="openQualityGroup"
+      @keydown.stop="handleQualityKeydown"
+    >
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <span class="text-xs font-semibold text-gray-600 dark:text-gray-300">{{ t('monitorCommon.qualityChecks') }}</span>
+        <span class="text-[11px] text-primary-600 dark:text-primary-400">{{ t('monitorCommon.viewQualityChecks') }}</span>
+      </div>
+      <div v-if="qualityLoading" class="text-xs text-gray-400">{{ t('common.loading') }}</div>
+      <div v-else-if="qualityResults.length" class="grid grid-cols-4 gap-2">
+        <div v-for="result in qualityResults" :key="result.id" class="min-w-0 overflow-hidden rounded-md border border-gray-200 bg-gray-50 p-1.5 dark:border-dark-700 dark:bg-dark-800" :data-quality-result="result.id">
+          <div class="truncate text-[10px] font-medium text-gray-500 dark:text-gray-400">{{ result.test_name || result.plan_name || '-' }}</div>
+          <div class="pointer-events-none mt-1 h-[72px] overflow-hidden">
+            <TestResultOutput :result="result" compact :max-preview-height="72" />
+          </div>
+        </div>
+      </div>
+      <div v-else class="text-xs text-gray-400">{{ t('monitorCommon.qualityChecksEmpty') }}</div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import type { UserMonitorView } from '@/api/channelMonitor'
+import { testResultsAPI } from '@/api/testResults'
+import type { TestResult } from '@/types'
 import {
   useChannelMonitorFormat,
   providerGradient,
@@ -90,6 +121,7 @@ import MonitorMetricPair from './MonitorMetricPair.vue'
 import MonitorAvailabilityRow from './MonitorAvailabilityRow.vue'
 import MonitorTimeline from './MonitorTimeline.vue'
 import MonitorQuotaView from '@/components/common/MonitorQuotaView.vue'
+import TestResultOutput from '@/components/tests/TestResultOutput.vue'
 
 // 图标配色与 utils/platformColors.ts 的平台色对齐（新 4 家）。
 const PROVIDER_TINT: Record<string, string> = {
@@ -116,6 +148,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const router = useRouter()
+const qualityResults = ref<TestResult[]>([])
+const qualityLoading = ref(false)
 const {
   statusLabel,
   statusBadgeClass,
@@ -143,4 +178,35 @@ const extraModelsCountLabel = computed(() => {
   if (count === 0) return undefined
   return t('monitorCommon.extraModelsCount', { n: count })
 })
+
+async function loadQualityResults() {
+  if (!props.item.quality_group_id) {
+    qualityResults.value = []
+    return
+  }
+  qualityLoading.value = true
+  try {
+    qualityResults.value = await testResultsAPI.listForGroup(props.item.quality_group_id, 4)
+  } catch {
+    qualityResults.value = []
+  } finally {
+    qualityLoading.value = false
+  }
+}
+function openQualityGroup() {
+  if (props.item.quality_group_id) router.push({ path: '/test-results', query: { group_id: String(props.item.quality_group_id) } })
+}
+function handleCardKeydown(event: KeyboardEvent) {
+  if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return
+  event.preventDefault()
+  emit('click')
+}
+function handleQualityKeydown(event: KeyboardEvent) {
+  if (['Enter', ' '].includes(event.key)) {
+    event.preventDefault()
+    openQualityGroup()
+  }
+}
+onMounted(() => { void loadQualityResults() })
+watch(() => props.item.quality_group_id, () => { void loadQualityResults() })
 </script>

@@ -84,7 +84,8 @@ func TestReplaceModelMappingWithUpstream(t *testing.T) {
 			require.False(t, account.IsModelSupported("alias"))
 			require.False(t, account.IsModelSupported("anything"))
 			require.True(t, account.IsModelSupported("new-model"))
-			snapshot := repo.updates.Extra[UpstreamModelMetadataExtraKey].(UpstreamModelMetadataSnapshot)
+			snapshot, ok := repo.updates.Extra[UpstreamModelMetadataExtraKey].(UpstreamModelMetadataSnapshot)
+			require.True(t, ok)
 			require.NotContains(t, snapshot.Models, "removed-model")
 			require.Contains(t, snapshot.Models, "retained-model")
 			if complete {

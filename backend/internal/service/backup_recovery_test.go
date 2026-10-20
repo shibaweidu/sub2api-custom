@@ -153,7 +153,8 @@ func TestBackupRecovery_FailedStateWriteNeverDeletesObjects(t *testing.T) {
 	seedS3Config(t, repo)
 	store := newMockObjectStore()
 	svc := newTestBackupService(repo, &mockDumper{}, store)
-	record := archiveRecord("interrupted", time.Now().Add(-time.Hour).Format(time.RFC3339))
+	record := archiveRecord("interrupted", time.Now().Add(-backupScheduledLeaderLockTTL-time.Minute).Format(time.RFC3339))
+	record.MonthlyArchive = nil
 	record.Status, record.S3Key = "running", "interrupted.sql.gz"
 	store.objects[record.S3Key] = []byte("payload")
 	require.NoError(t, svc.saveRecord(ctx, record))
@@ -164,6 +165,26 @@ func TestBackupRecovery_FailedStateWriteNeverDeletesObjects(t *testing.T) {
 	require.Equal(t, "running", saved.Status)
 	require.Contains(t, store.objects, record.S3Key)
 	require.Empty(t, store.deletedKeys)
+}
+
+func TestBackupOperationExpired(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		started string
+		expired bool
+	}{
+		{"active", now.Add(-time.Hour).Format(time.RFC3339), false},
+		{"at grace boundary", now.Add(-backupScheduledLeaderLockTTL).Format(time.RFC3339), false},
+		{"expired", now.Add(-backupScheduledLeaderLockTTL - time.Second).Format(time.RFC3339), true},
+		{"future", now.Add(time.Hour).Format(time.RFC3339), false},
+		{"missing", "", false},
+		{"invalid", "invalid", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expired, backupOperationExpired(tc.started, now))
+		})
+	}
 }
 
 func TestBackupRecovery_RestoreReservationProtectsFromPeerCleanup(t *testing.T) {
@@ -205,7 +226,7 @@ func TestBackupRecovery_LateRestoreResultCannotReleaseNewProtection(t *testing.T
 	svc := newTestBackupService(newMockSettingRepo(), &mockDumper{}, newMockObjectStore())
 	record := archiveRecord("restoring", time.Now().AddDate(-1, 0, 0).Format(time.RFC3339))
 	record.RestoreStatus = "running"
-	record.RestoreStartedAt = time.Now().Add(-time.Hour).Format(time.RFC3339)
+	record.RestoreStartedAt = time.Now().Add(-backupScheduledLeaderLockTTL - time.Minute).Format(time.RFC3339)
 	require.NoError(t, svc.saveRecord(ctx, record))
 	svc.recoverStaleRecords()
 	current, err := svc.beginBackupRestore(ctx, record.ID)

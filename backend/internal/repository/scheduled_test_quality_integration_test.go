@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/lib/pq"
@@ -95,6 +96,7 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 	applyMigration("270_scheduled_test_time_periods.sql")
 	applyMigration("270_scheduled_test_time_periods.sql")
 	applyMigration("276_scheduled_test_cost_control.sql")
+	applyMigration("279_scheduled_test_account_selection_and_publishing.sql")
 	applyMigration("282_scheduled_test_excluded_accounts.sql")
 	applyMigration("282_scheduled_test_excluded_accounts.sql")
 	applyMigration("284_scheduled_test_output_tokens.sql")
@@ -178,6 +180,7 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 			PlanID: plan.ID, TestDefinitionID: &definitionID, TargetMode: "all_accounts",
 			GroupID: &groupID, AccountID: &accountID, Status: status, ModelID: model,
 			ReasoningEffort: effort, OutputKind: "text", ResponseText: "Rendered output",
+			Published: true,
 			StartedAt: started.Add(-time.Duration(age) * time.Minute), FinishedAt: started,
 		})
 		require.NoError(t, err)
@@ -214,13 +217,13 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		}
 		seriesCounts[fmt.Sprintf("%d/%s/%s", *result.TestDefinitionID, result.ModelID, result.ReasoningEffort)]++
 	}
-	require.Zero(t, seriesCounts[fmt.Sprintf("%d/model-a/high", candyID)], "a running check must not fall back to earlier successes")
-	require.Equal(t, 1, seriesCounts[fmt.Sprintf("%d/model-a/high", htmlID)], "the latest failed check remains visible")
+	require.Equal(t, 1, seriesCounts[fmt.Sprintf("%d/model-a/high", candyID)], "a running check retains the previous success")
+	require.Equal(t, 1, seriesCounts[fmt.Sprintf("%d/model-a/high", htmlID)], "a failed check retains the previous success")
 	require.Equal(t, 1, seriesCounts[fmt.Sprintf("%d/model-a/medium", candyID)])
 	require.Equal(t, 1, seriesCounts[fmt.Sprintf("%d/model-b/high", candyID)])
-	require.False(t, seen[initialRunning.ID], "the user list contains completed results only")
+	require.True(t, seen[initialRunning.ID], "a new series can display its live test state")
 	require.False(t, seen[running.ID], "in-progress checks are not successful results")
-	require.True(t, seen[failed.ID])
+	require.False(t, seen[failed.ID])
 	require.False(t, seen[privateResult.ID])
 	publicJSON, err := json.Marshal(visible)
 	require.NoError(t, err)
@@ -233,12 +236,13 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		first, err := results.ListVisibleHistory(ctx, 100, anchor.ID, 0, 2)
 		require.NoError(t, err)
 		require.Len(t, first, 2)
+		require.Equal(t, running.ID, first[0].ID, "history includes live tests beside completed work")
 		second, err := results.ListVisibleHistory(ctx, 100, anchor.ID, first[1].ID, 10)
 		require.NoError(t, err)
-		require.Len(t, second, 4)
+		require.Len(t, second, 5)
 		all := append(first, second...)
 		for i, result := range all {
-			require.Equal(t, "success", result.Status)
+			require.Contains(t, []string{"success", "running"}, result.Status)
 			require.Empty(t, result.AccountName, "public history must not load account names")
 			require.Equal(t, candyID, *result.TestDefinitionID)
 			require.Equal(t, "model-a", result.ModelID)
@@ -255,8 +259,16 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		last, err := results.ListVisibleHistory(ctx, 100, anchor.ID, all[len(all)-1].ID, 10)
 		require.NoError(t, err)
 		require.Empty(t, last)
-		failedHistory, err := results.ListVisibleHistory(ctx, 100, failed.ID, 0, 20)
-		require.NoError(t, err, "a failed latest result can open the successful history for its own series")
+		_, err = results.ListVisibleHistory(ctx, 100, failed.ID, 0, 20)
+		require.ErrorIs(t, err, sql.ErrNoRows, "failed work is hidden from public history")
+		var htmlAnchor int64
+		for _, row := range visible {
+			if row.TestDefinitionID != nil && *row.TestDefinitionID == htmlID && row.ModelID == "model-a" && row.ReasoningEffort == "high" {
+				htmlAnchor = row.ID
+			}
+		}
+		failedHistory, err := results.ListVisibleHistory(ctx, 100, htmlAnchor, 0, 20)
+		require.NoError(t, err)
 		require.Len(t, failedHistory, 6)
 		for _, row := range failedHistory {
 			require.Equal(t, htmlID, *row.TestDefinitionID)
@@ -264,19 +276,19 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 			require.Equal(t, failed.ModelID, row.ModelID)
 			require.Equal(t, failed.AccountID, row.AccountID)
 		}
-		failedNext, err := results.ListVisibleHistory(ctx, 100, failed.ID, failedHistory[1].ID, 20)
+		failedNext, err := results.ListVisibleHistory(ctx, 100, htmlAnchor, failedHistory[1].ID, 20)
 		require.NoError(t, err)
 		require.Len(t, failedNext, 4)
 		require.Equal(t, failedHistory[2].ID, failedNext[0].ID)
 		for _, state := range []string{"failed", "error"} {
 			emptyAnchor := createResult(htmlID, state, "empty-history-"+state, "high", 0)
 			emptyHistory, err := results.ListVisibleHistory(ctx, 100, emptyAnchor.ID, 0, 20)
-			require.NoError(t, err, "an authorized failure with no successful history returns an empty page")
+			require.ErrorIs(t, err, sql.ErrNoRows, "failed work cannot anchor public history")
 			require.Empty(t, emptyHistory)
 		}
 		_, err = results.ListVisibleHistory(ctx, 100, anchor.ID, failed.ID, 20)
 		require.ErrorIs(t, err, sql.ErrNoRows, "failed results are anchors, not successful-history cursors")
-		for _, hiddenID := range []int64{privateResult.ID, running.ID, initialRunning.ID, 999999} {
+		for _, hiddenID := range []int64{privateResult.ID, failed.ID, 999999} {
 			_, err := results.ListVisibleHistory(ctx, 100, hiddenID, 0, 20)
 			require.ErrorIs(t, err, sql.ErrNoRows)
 			_, err = results.ListVisibleHistory(ctx, 100, anchor.ID, hiddenID, 20)
@@ -295,6 +307,7 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 
 		// A manually retried result keeps its ID but becomes the newest result.
 		oldest := all[len(all)-1]
+		oldest.Published = true
 		oldest.StartedAt = started.Add(time.Minute)
 		require.NoError(t, results.Update(ctx, oldest))
 		reordered, err := results.ListVisibleHistory(ctx, 100, anchor.ID, 0, 2)
@@ -303,6 +316,7 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		oldest.StartedAt = started.Add(-6 * time.Minute)
 		require.NoError(t, results.Update(ctx, oldest))
 		tied := all[len(all)-2]
+		tied.Published = true
 		tiedStartedAt := tied.StartedAt
 		tied.StartedAt = oldest.StartedAt
 		require.NoError(t, results.Update(ctx, tied))
@@ -422,7 +436,7 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		require.ElementsMatch(t, expectedIDs, actualIDs)
 	})
 
-	t.Run("public list shows successful and failed latest-run results", func(t *testing.T) {
+	t.Run("public list keeps previous successes during running and failed rounds", func(t *testing.T) {
 		testScheduledTestLatestPublicRun(t, ctx, db, plans, results, candyID, htmlID)
 	})
 
@@ -508,12 +522,14 @@ func TestScheduledTestQualityIntegration(t *testing.T) {
 		require.NoError(t, err)
 		statsPlan, err := plans.Create(ctx, &service.ScheduledTestPlan{
 			Name: "Local statistics", GroupIDs: []int64{groupID}, GroupID: &groupID, TestDefinitionID: &definition.ID,
-			TestDefinitionIDs: []int64{definition.ID}, TestType: "quality", TargetMode: "all_accounts",
+			AutoPublishResults: true,
+			TestDefinitionIDs:  []int64{definition.ID}, TestType: "quality", TargetMode: "all_accounts",
 			ModelID: "model-a", CronExpression: "0 * * * *", Enabled: true, MaxResults: 5,
 		})
 		require.NoError(t, err)
 		svc := service.NewScheduledTestService(plans, results)
 		pending, err := svc.StartResult(ctx, statsPlan.ID, &service.ScheduledTestResult{
+			Published:        statsPlan.AutoPublishResults,
 			TestDefinitionID: &definition.ID, GroupID: &groupID, TargetMode: "group",
 			ModelID: "model-a", OutputKind: "statistics", StartedAt: started,
 		})
@@ -570,6 +586,7 @@ INSERT INTO account_groups VALUES (70,8),(71,8)`)
 		groupStatistics, err := results.Create(ctx, &service.ScheduledTestResult{
 			PlanID: statsPlan.ID, TestDefinitionID: &definition.ID, GroupID: &groupID,
 			TargetMode: "group", Status: "success", OutputKind: "statistics", ModelID: "visibility-stats",
+			Published: true,
 			StartedAt: started, FinishedAt: started,
 		})
 		require.NoError(t, err)
@@ -596,7 +613,8 @@ INSERT INTO account_groups VALUES (70,8),(71,8)`)
 					result, err := results.Create(ctx, &service.ScheduledTestResult{
 						PlanID: plan.ID, TestDefinitionID: &candyID, GroupID: &groupID, AccountID: id,
 						TargetMode: mode, Status: "success", OutputKind: "number", ResponseText: "29",
-						ModelID: plan.ModelID, StartedAt: started.Add(-age), FinishedAt: started,
+						Published: true,
+						ModelID:   plan.ModelID, StartedAt: started.Add(-age), FinishedAt: started,
 					})
 					require.NoError(t, err)
 					return result
@@ -724,6 +742,7 @@ INSERT INTO account_groups VALUES (70,8),(71,8)`)
 			result, err := results.Create(ctx, &service.ScheduledTestResult{
 				PlanID: movedPlan.ID, TestDefinitionID: &candyID, GroupID: &groupID,
 				AccountID: &movedAccount, TargetMode: "all_accounts", Status: "success",
+				Published:  true,
 				OutputKind: "number", ResponseText: "29", ModelID: movedPlan.ModelID,
 				StartedAt: started, FinishedAt: started,
 			})

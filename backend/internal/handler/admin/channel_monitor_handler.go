@@ -60,6 +60,9 @@ type channelMonitorCreateRequest struct {
 	CheckMode string `json:"check_mode" binding:"omitempty,oneof=probe quota quota_probe"`
 	// AccountID: 配额模式关联的账号 ID。
 	AccountID *int64 `json:"account_id"`
+	// ProbeAccountID: 探活模式使用的真实渠道账号 ID。
+	ProbeAccountID *int64 `json:"probe_account_id"`
+	QualityGroupID *int64 `json:"quality_group_id" binding:"omitempty,gt=0"`
 }
 
 type channelMonitorUpdateRequest struct {
@@ -81,8 +84,10 @@ type channelMonitorUpdateRequest struct {
 	BodyOverride     *map[string]any    `json:"body_override"`
 
 	// CheckMode/AccountID：nil = 不更新；AccountID 指向 0 = 清空关联。
-	CheckMode *string `json:"check_mode" binding:"omitempty,oneof=probe quota quota_probe"`
-	AccountID *int64  `json:"account_id"`
+	CheckMode      *string `json:"check_mode" binding:"omitempty,oneof=probe quota quota_probe"`
+	AccountID      *int64  `json:"account_id"`
+	ProbeAccountID *int64  `json:"probe_account_id"`
+	QualityGroupID *int64  `json:"quality_group_id" binding:"omitempty,gte=0"`
 }
 
 type channelMonitorResponse struct {
@@ -115,9 +120,11 @@ type channelMonitorResponse struct {
 
 	// 配额模式：check_mode + 关联账号 + 主模型最近配额快照
 	// （LatestQuota 由 List handler 批量聚合后填充；管理端不受 channel_monitor_show_quota 影响）。
-	CheckMode   string                       `json:"check_mode"`
-	AccountID   *int64                       `json:"account_id"`
-	LatestQuota *domain.MonitorQuotaSnapshot `json:"latest_quota,omitempty"`
+	CheckMode      string                       `json:"check_mode"`
+	AccountID      *int64                       `json:"account_id"`
+	ProbeAccountID *int64                       `json:"probe_account_id"`
+	QualityGroupID *int64                       `json:"quality_group_id"`
+	LatestQuota    *domain.MonitorQuotaSnapshot `json:"latest_quota,omitempty"`
 }
 
 type channelMonitorCheckResultResponse struct {
@@ -184,6 +191,8 @@ func channelMonitorToResponse(m *service.ChannelMonitor) *channelMonitorResponse
 		BodyOverride:        m.BodyOverride,
 		CheckMode:           m.CheckMode,
 		AccountID:           m.AccountID,
+		ProbeAccountID:      m.ProbeAccountID,
+		QualityGroupID:      m.QualityGroupID,
 		// PrimaryStatus / PrimaryLatencyMs / Availability7d / LatestQuota
 		// 由 List handler 在批量聚合后填充。
 	}
@@ -354,6 +363,8 @@ func (h *ChannelMonitorHandler) Create(c *gin.Context) {
 		BodyOverride:     req.BodyOverride,
 		CheckMode:        req.CheckMode,
 		AccountID:        req.AccountID,
+		ProbeAccountID:   req.ProbeAccountID,
+		QualityGroupID:   req.QualityGroupID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -450,6 +461,8 @@ func (h *ChannelMonitorHandler) Update(c *gin.Context) {
 		BodyOverride:     req.BodyOverride,
 		CheckMode:        req.CheckMode,
 		AccountID:        req.AccountID,
+		ProbeAccountID:   req.ProbeAccountID,
+		QualityGroupID:   req.QualityGroupID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

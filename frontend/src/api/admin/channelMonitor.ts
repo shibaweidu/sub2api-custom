@@ -100,6 +100,10 @@ export interface ChannelMonitor {
   check_mode: CheckMode
   /** 配额模式关联的账号 ID；探活模式为 null */
   account_id: number | null
+  /** 探活模式关联的真实渠道账号；为空时使用监控自身的 endpoint/key 快照 */
+  probe_account_id?: number | null
+  /** 关联到用户端展示的质量检测分组；0/null 表示清除关联 */
+  quality_group_id?: number | null
   /** 主模型最近一次配额快照（配额模式；无历史时为 null） */
   latest_quota?: MonitorQuotaSnapshot | null
 }
@@ -140,6 +144,9 @@ export interface CreateParams {
    * update 语义：>0=换绑，0=解绑（切回 probe 模式时前端发 0 清空存量关联）；
    * create 绝不发 0——后端会把 0 存成 &0 触发外键违约。 */
   account_id?: number | null
+  /** 探活模式关联的真实渠道账号；0 表示解绑（update） */
+  probe_account_id?: number | null
+  quality_group_id?: number | null
   primary_model: string
   extra_models?: string[]
   group_name?: string

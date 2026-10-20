@@ -47,7 +47,7 @@ func (r *accountRepository) AcquireCacheRecoveryRequest(ctx context.Context, acc
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Every protection writer takes this account lock before its state locks.
 	// Gate calls never lock plans, preserving the plan -> account -> state order.
 	err = tx.QueryRowContext(ctx, `SELECT status='active' AND schedulable AND deleted_at IS NULL
@@ -74,7 +74,7 @@ func (r *accountRepository) AcquireCacheRecoveryRequest(ctx context.Context, acc
 		var used int64
 		var raw []byte
 		if err := rows.Scan(&phase, &validWindow, &used, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return false, err
 		}
 		var rule struct {
@@ -84,7 +84,7 @@ func (r *accountRepository) AcquireCacheRecoveryRequest(ctx context.Context, acc
 			} `json:"recovery"`
 		}
 		if err := json.Unmarshal(raw, &rule); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return false, fmt.Errorf("decode cache recovery admission rule: %w", err)
 		}
 		if phase != "trial" || !validWindow || !rule.Recovery.Enabled || used < 0 || used >= rule.Recovery.MaxRequests {
@@ -92,7 +92,9 @@ func (r *accountRepository) AcquireCacheRecoveryRequest(ctx context.Context, acc
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil || !allowed {
 		return false, err
 	}

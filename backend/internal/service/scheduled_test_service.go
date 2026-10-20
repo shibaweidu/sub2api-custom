@@ -85,6 +85,18 @@ func validateScheduledTestPlan(plan *ScheduledTestPlan) error {
 		}
 	}
 	plan.GroupIDs = groups
+	seenAccounts := make(map[int64]bool, len(plan.AccountIDs))
+	selectedAccounts := make([]int64, 0, len(plan.AccountIDs))
+	for _, id := range plan.AccountIDs {
+		if id <= 0 {
+			return fmt.Errorf("account_ids must contain positive IDs")
+		}
+		if !seenAccounts[id] {
+			seenAccounts[id] = true
+			selectedAccounts = append(selectedAccounts, id)
+		}
+	}
+	plan.AccountIDs = selectedAccounts
 	seenExcluded := make(map[int64]bool, len(plan.ExcludedAccountIDs))
 	excluded := make([]int64, 0, len(plan.ExcludedAccountIDs))
 	for _, id := range plan.ExcludedAccountIDs {
@@ -440,6 +452,45 @@ func (s *ScheduledTestService) ListVisibleResults(ctx context.Context, userID in
 	return results, nil
 }
 
+func (s *ScheduledTestService) ListVisibleLatestResultsForGroup(ctx context.Context, userID, groupID int64, limit int) ([]*ScheduledTestResult, error) {
+	repo, ok := s.resultRepo.(ScheduledTestGroupResultRepository)
+	if !ok {
+		return []*ScheduledTestResult{}, nil
+	}
+	results, err := repo.ListVisibleLatestForGroup(ctx, userID, groupID, limit)
+	if err != nil {
+		return nil, err
+	}
+	normalizePublicTestResults(results)
+	return results, nil
+}
+
+func (s *ScheduledTestService) ListVisibleResultsForGroup(ctx context.Context, userID, groupID int64) ([]*ScheduledTestResult, error) {
+	repo, ok := s.resultRepo.(ScheduledTestGroupResultListRepository)
+	if !ok {
+		return []*ScheduledTestResult{}, nil
+	}
+	results, err := repo.ListVisibleForGroup(ctx, userID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	normalizePublicTestResults(results)
+	return results, nil
+}
+
+func (s *ScheduledTestService) ListVisibleRecentResultsForGroup(ctx context.Context, userID, groupID int64, limit int) ([]*ScheduledTestResult, error) {
+	repo, ok := s.resultRepo.(ScheduledTestGroupRecentResultRepository)
+	if !ok {
+		return []*ScheduledTestResult{}, nil
+	}
+	results, err := repo.ListVisibleRecentForGroup(ctx, userID, groupID, limit)
+	if err != nil {
+		return nil, err
+	}
+	normalizePublicTestResults(results)
+	return results, nil
+}
+
 // ListVisibleGroupResults projects existing checks to every authorized current group.
 func (s *ScheduledTestService) ListVisibleGroupResults(ctx context.Context, userID int64) ([]*ScheduledTestResult, error) {
 	repo, ok := s.resultRepo.(interface {
@@ -478,7 +529,33 @@ func (s *ScheduledTestService) ListVisibleResultHistory(ctx context.Context, use
 	return page, nil
 }
 
-// Failed results are public, but raw upstream diagnostics remain admin-only.
+func (s *ScheduledTestService) ListVisibleGroupResultHistory(ctx context.Context, userID, groupID, resultID, beforeID int64, limit int) (*ScheduledTestResultHistory, error) {
+	repo, ok := s.resultRepo.(ScheduledTestGroupHistoryRepository)
+	if !ok {
+		return &ScheduledTestResultHistory{Items: []*ScheduledTestResult{}}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	results, err := repo.ListVisibleHistoryForGroup(ctx, userID, groupID, resultID, beforeID, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	page := &ScheduledTestResultHistory{Items: make([]*ScheduledTestResult, 0, len(results))}
+	if len(results) > limit {
+		cursor := results[limit-1].ID
+		page.NextBeforeID = &cursor
+		results = results[:limit]
+	}
+	normalizePublicTestResults(results)
+	page.Items = append(page.Items, results...)
+	return page, nil
+}
+
+// Public results omit raw upstream diagnostics; administrators retain full details.
 func normalizePublicTestResults(results []*ScheduledTestResult) {
 	normalizeStoredTestResults(results)
 	for _, result := range results {
@@ -556,6 +633,17 @@ func (s *ScheduledTestService) DeleteResult(ctx context.Context, id int64) error
 	return s.resultRepo.Delete(ctx, id)
 }
 
+func (s *ScheduledTestService) SetResultPublished(ctx context.Context, id int64, published bool) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid test result id")
+	}
+	repo, ok := s.resultRepo.(ScheduledTestResultPublishingRepository)
+	if !ok {
+		return fmt.Errorf("result publishing unavailable")
+	}
+	return repo.SetPublished(ctx, id, published)
+}
+
 // SaveResult inserts a result and prunes old entries beyond maxResults.
 func (s *ScheduledTestService) SaveResult(ctx context.Context, planID int64, maxResults int, result *ScheduledTestResult) error {
 	if result == nil {
@@ -565,6 +653,9 @@ func (s *ScheduledTestService) SaveResult(ctx context.Context, planID int64, max
 		maxResults = 50
 	}
 	result.PlanID = planID
+	if result.Status == "failed" || result.Status == "error" {
+		result.Published = false
+	}
 	if _, err := s.resultRepo.Create(ctx, result); err != nil {
 		return err
 	}
@@ -596,6 +687,9 @@ func (s *ScheduledTestService) StartResult(ctx context.Context, planID int64, re
 func (s *ScheduledTestService) CompleteResult(ctx context.Context, maxResults int, result *ScheduledTestResult) error {
 	if result == nil || result.ID <= 0 {
 		return fmt.Errorf("test result id is required")
+	}
+	if result.Status == "failed" || result.Status == "error" {
+		result.Published = false
 	}
 	if err := s.resultRepo.Update(ctx, result); err != nil {
 		return err

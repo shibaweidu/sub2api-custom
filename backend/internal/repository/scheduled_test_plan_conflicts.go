@@ -42,11 +42,11 @@ func validateScheduledTestPlanConflicts(ctx context.Context, tx *sql.Tx, plan *s
 		other := &service.ScheduledTestPlan{Enabled: true}
 		var raw []byte
 		if err := rows.Scan(&other.ID, &other.Name, pq.Array(&other.GroupIDs), &raw, pq.Array(&other.ExcludedAccountIDs)); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if err := json.Unmarshal(raw, &other.Protection); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		if enabledScheduledTestRoutingPlan(other) {
@@ -54,7 +54,7 @@ func validateScheduledTestPlanConflicts(ctx context.Context, tx *sql.Tx, plan *s
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,8 @@ func validateScheduledTestPlanConflicts(ctx context.Context, tx *sql.Tx, plan *s
 // Recheck ownership on every frozen attempt and mutation: account edits can
 // introduce overlaps after two otherwise disjoint strategies were configured.
 // Caller SQL supplies the current plan alias p and account alias a.
-const scheduledTestRuntimeOwnershipSQL = `(NOT (a.id = ANY(p.excluded_account_ids)) AND (
+const scheduledTestRuntimeOwnershipSQL = `(NOT (a.id = ANY(p.excluded_account_ids))
+ AND (cardinality(p.account_ids)=0 OR a.id=ANY(p.account_ids)) AND (
  NOT (p.enabled AND p.protection->>'enabled'='true' AND (CASE WHEN p.protection->>'mode'='all_pass'
   THEN (COALESCE(p.protection->'on_pass'->>'group_mode','keep')='assign'
    OR COALESCE(p.protection->'on_fail'->>'group_mode','keep')='assign'
@@ -90,7 +91,8 @@ const scheduledTestRuntimeOwnershipSQL = `(NOT (a.id = ANY(p.excluded_account_id
   WHERE CASE WHEN p.protection->>'mode'='combined' THEN rule->'action'->>'group_mode'='assign'
    ELSE rule->'on_pass'->>'group_mode'='assign' OR rule->'on_fail'->>'group_mode'='assign' END) END))
  OR NOT EXISTS(SELECT 1 FROM scheduled_test_plans other
-  WHERE other.id<>p.id AND NOT (a.id = ANY(other.excluded_account_ids)) AND other.enabled AND other.protection->>'enabled'='true'
+  WHERE other.id<>p.id AND NOT (a.id = ANY(other.excluded_account_ids))
+  AND (cardinality(other.account_ids)=0 OR a.id=ANY(other.account_ids)) AND other.enabled AND other.protection->>'enabled'='true'
   AND (CASE WHEN other.protection->>'mode'='all_pass'
    THEN (COALESCE(other.protection->'on_pass'->>'group_mode','keep')='assign'
     OR COALESCE(other.protection->'on_fail'->>'group_mode','keep')='assign'

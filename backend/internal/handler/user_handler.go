@@ -29,6 +29,43 @@ type UserHandler struct {
 	scheduledTestSvc      *service.ScheduledTestService
 }
 
+type userQualityResultSummary struct {
+	ID               int64                            `json:"id"`
+	PlanID           int64                            `json:"plan_id"`
+	TestName         string                           `json:"test_name"`
+	TestDefinitionID *int64                           `json:"test_definition_id,omitempty"`
+	GroupName        string                           `json:"group_name"`
+	GroupID          *int64                           `json:"group_id,omitempty"`
+	TargetMode       string                           `json:"target_mode,omitempty"`
+	ResultSetID      *int64                           `json:"result_set_id,omitempty"`
+	ModelID          string                           `json:"model_id"`
+	ReasoningEffort  string                           `json:"reasoning_effort,omitempty"`
+	Status           string                           `json:"status"`
+	OutputKind       string                           `json:"output_kind"`
+	OutputHTML       string                           `json:"output_html,omitempty"`
+	OutputNumeric    *float64                         `json:"output_numeric,omitempty"`
+	OutputStatistics *service.ScheduledTestStatistics `json:"output_statistics,omitempty"`
+	OutputModelCheck *service.ScheduledTestModelCheck `json:"output_model_check,omitempty"`
+	ResponseText     string                           `json:"response_text,omitempty"`
+	LatencyMs        int64                            `json:"latency_ms"`
+	StartedAt        time.Time                        `json:"started_at"`
+	FinishedAt       time.Time                        `json:"finished_at"`
+	CreatedAt        time.Time                        `json:"created_at"`
+}
+
+func toUserQualityResultSummary(result *service.ScheduledTestResult) userQualityResultSummary {
+	return userQualityResultSummary{
+		ID: result.ID, PlanID: result.PlanID, TestName: result.TestName,
+		TestDefinitionID: result.TestDefinitionID, GroupName: result.GroupName,
+		GroupID: result.GroupID, ModelID: result.ModelID, ReasoningEffort: result.ReasoningEffort,
+		Status: result.Status, OutputKind: result.OutputKind, OutputHTML: result.OutputHTML,
+		OutputNumeric: result.OutputNumeric, OutputStatistics: result.OutputStatistics,
+		OutputModelCheck: result.OutputModelCheck, ResponseText: result.ResponseText,
+		LatencyMs: result.LatencyMs, StartedAt: result.StartedAt, FinishedAt: result.FinishedAt,
+		CreatedAt: result.CreatedAt,
+	}
+}
+
 func (h *UserHandler) SetScheduledTestService(svc *service.ScheduledTestService) {
 	h.scheduledTestSvc = svc
 }
@@ -42,19 +79,52 @@ func (h *UserHandler) ListTestResults(c *gin.Context) {
 		response.InternalError(c, "test results unavailable")
 		return
 	}
-	limit := 3
-	if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 3 {
-		limit = n
-	}
 	var rows []*service.ScheduledTestResult
 	var err error
-	if c.Query("group_view") == "all" {
+	if raw, exists := c.GetQuery("group_id"); exists {
+		groupID, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || groupID <= 0 {
+			response.BadRequest(c, "invalid group_id")
+			return
+		}
+		if _, limited := c.GetQuery("limit"); limited {
+			rows, err = h.scheduledTestSvc.ListVisibleRecentResultsForGroup(c.Request.Context(), subject.UserID, groupID, 4)
+		} else {
+			rows, err = h.scheduledTestSvc.ListVisibleResultsForGroup(c.Request.Context(), subject.UserID, groupID)
+		}
+	} else if c.Query("group_view") == "all" {
 		rows, err = h.scheduledTestSvc.ListVisibleGroupResults(c.Request.Context(), subject.UserID)
 	} else {
+		limit := 3
+		if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 3 {
+			limit = n
+		}
 		rows, err = h.scheduledTestSvc.ListVisibleResults(c.Request.Context(), subject.UserID, limit)
 	}
 	if err != nil {
 		response.InternalError(c, err.Error())
+		return
+	}
+	if c.Query("group_id") != "" {
+		out := make([]userQualityResultSummary, 0, len(rows))
+		resultSetIDs := make(map[int64]int64)
+		for _, row := range rows {
+			if row.AccountID != nil {
+				if _, exists := resultSetIDs[*row.AccountID]; !exists {
+					resultSetIDs[*row.AccountID] = row.ID
+				}
+			}
+		}
+		for _, row := range rows {
+			item := toUserQualityResultSummary(row)
+			item.TargetMode = row.TargetMode
+			if row.AccountID != nil {
+				resultSetID := resultSetIDs[*row.AccountID]
+				item.ResultSetID = &resultSetID
+			}
+			out = append(out, item)
+		}
+		c.JSON(http.StatusOK, out)
 		return
 	}
 	c.JSON(http.StatusOK, rows)
@@ -91,7 +161,17 @@ func (h *UserHandler) ListTestResultHistory(c *gin.Context) {
 			return
 		}
 	}
-	page, err := h.scheduledTestSvc.ListVisibleResultHistory(c.Request.Context(), subject.UserID, id, beforeID, limit)
+	var page *service.ScheduledTestResultHistory
+	if rawGroupID, provided := c.GetQuery("group_id"); provided {
+		groupID, parseErr := strconv.ParseInt(rawGroupID, 10, 64)
+		if parseErr != nil || groupID <= 0 {
+			response.BadRequest(c, "invalid group_id")
+			return
+		}
+		page, err = h.scheduledTestSvc.ListVisibleGroupResultHistory(c.Request.Context(), subject.UserID, groupID, id, beforeID, limit)
+	} else {
+		page, err = h.scheduledTestSvc.ListVisibleResultHistory(c.Request.Context(), subject.UserID, id, beforeID, limit)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		response.NotFound(c, "test result history not found")
 		return

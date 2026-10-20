@@ -26,6 +26,7 @@ export interface UserMonitorView {
   name: string
   provider: Provider
   group_name: string
+  quality_group_id?: number | null
   primary_model: string
   primary_status: MonitorStatus
   primary_latency_ms: number | null

@@ -134,7 +134,7 @@ func (r *channelMonitorV2Repository) loadChannelMonitorV2RecentRequests(ctx cont
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ignored := make(map[string]bool, len(cfg.IgnoredErrorCategories))
 	for _, category := range cfg.IgnoredErrorCategories {
 		ignored[category] = true

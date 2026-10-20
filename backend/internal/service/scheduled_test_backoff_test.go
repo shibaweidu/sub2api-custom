@@ -70,6 +70,7 @@ func TestScheduledTestCostBackoffIsPerAccountAndManualBypasses(t *testing.T) {
 	runner.scheduledSvc.resultRepo = repo
 	defer runner.Stop()
 	plan := automaticRetryTestPlan()
+	plan.AutoRecover = true // Account recovery retains its cooldown policy.
 	plan.TestDefinitionIDs = []int64{1, 2}
 	automatic := context.WithValue(context.Background(), scheduledTestAutomaticRunKey{}, true)
 	runner.executePlanSnapshot(automatic, plan, repo)
@@ -96,6 +97,31 @@ func TestScheduledTestCostBackoffIsPerAccountAndManualBypasses(t *testing.T) {
 	runner.executePlanSnapshot(automatic, plan, repo)
 	require.Equal(t, 7, calls[12])
 	require.Equal(t, 1, repo.states[12].ConsecutiveFailures)
+}
+
+func TestScheduledTestDisplayOnlyRunsAtNextSlotDespiteOldCooldown(t *testing.T) {
+	base := &snapshotResultRepoStub{retryResultRepoStub: &retryResultRepoStub{}, targets: []int64{12}}
+	repo := &costBackoffRepo{snapshotResultRepoStub: base, states: map[int64]*ScheduledTestBackoff{
+		12: {ConsecutiveFailures: 3, NextCheckAt: time.Now().Add(time.Hour)},
+	}, policy: map[int64]string{}}
+	calls := 0
+	accounts := scheduledTestExecutionAccountRepo{get: func(context.Context, int64) (*Account, error) {
+		calls++
+		return nil, errors.New("missing account")
+	}}
+	runner := newSnapshotRunner(base, accounts)
+	runner.scheduledSvc.resultRepo = repo
+	defer runner.Stop()
+	plan := automaticRetryTestPlan()
+	execution := *plan
+	execution.TestDefinitionID = scheduledTestPtrInt64(1)
+	policy := scheduledTestQueuePolicy([]*scheduledTestExecutionTarget{{plan: &execution, prompt: "first", kind: "text"}})
+	repo.policy[12] = policy
+	automatic := context.WithValue(context.Background(), scheduledTestAutomaticRunKey{}, true)
+	runner.executePlanSnapshot(automatic, plan, repo)
+	runner.executePlanSnapshot(automatic, plan, repo)
+	require.Equal(t, 2, calls, "each scheduled slot runs instead of emitting a cooldown skip")
+	require.Zero(t, repo.writes, "display failures do not create cross-round cooldowns")
 }
 func TestScheduledTestCostBackoffStepsAndNoSamples(t *testing.T) {
 	for i, minutes := range []int{5, 15, 30, 60, 60, 60} {

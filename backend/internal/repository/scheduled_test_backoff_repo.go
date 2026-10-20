@@ -26,7 +26,7 @@ func (r *scheduledTestResultRepository) RecordTestBackoff(ctx context.Context, p
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// Serialize with policy edits/new rounds. Stale completions cannot postpone a
 	// newer run or resurrect an old configuration's cooldown.
 	var current bool

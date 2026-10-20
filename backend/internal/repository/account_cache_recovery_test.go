@@ -12,7 +12,7 @@ import (
 func TestAccountCacheRecoveryDatabaseErrorsFailClosed(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	mock.ExpectQuery(`(?s)SELECT status='active'.*FROM accounts WHERE id=\$1`).WithArgs(int64(41)).WillReturnError(errors.New("database unavailable"))
 	allowed, err := (&accountRepository{sql: db}).AcquireCacheRecoveryRequest(context.Background(), 41)
 	require.ErrorContains(t, err, "database unavailable")

@@ -70,6 +70,7 @@ INSERT INTO groups(id,name) VALUES(8,'Source tier'),(10,'Higher tier'),(11,'Unre
 		"262_scheduled_test_execution_snapshot.sql",
 		"281_scheduled_test_membership_revocation.sql",
 		"264_scheduled_test_cache_recovery.sql", "265_scheduled_test_generic_policy.sql", "268_scheduled_test_combination_states.sql", "270_scheduled_test_time_periods.sql", "282_scheduled_test_excluded_accounts.sql", "276_scheduled_test_cost_control.sql",
+		"279_scheduled_test_account_selection_and_publishing.sql",
 	} {
 		raw, err := migrations.FS.ReadFile(name)
 		require.NoError(t, err)
@@ -105,7 +106,7 @@ INSERT INTO account_groups(account_id,group_id) VALUES(62,8),(62,11);`)
 		started := time.Now().UTC().Add(time.Duration(sequence) * time.Second).Truncate(time.Microsecond)
 		raw, err := json.Marshal(snapshot)
 		require.NoError(t, err)
-		row, err := results.Create(ctx, &service.ScheduledTestResult{PlanID: plan.ID, TestDefinitionID: &definitionID, GroupID: plan.GroupID, AccountID: &accountID, TargetMode: plan.TargetMode, ModelID: plan.ModelID, Status: status, OutputKind: "model_check", ResponseText: string(raw), StartedAt: started, FinishedAt: started})
+		row, err := results.Create(ctx, &service.ScheduledTestResult{Published: true, PlanID: plan.ID, TestDefinitionID: &definitionID, GroupID: plan.GroupID, AccountID: &accountID, TargetMode: plan.TargetMode, ModelID: plan.ModelID, Status: status, OutputKind: "model_check", ResponseText: string(raw), StartedAt: started, FinishedAt: started})
 		require.NoError(t, err)
 		_, err = db.ExecContext(ctx, `UPDATE scheduled_test_plans SET latest_run_id=$2 WHERE id=$1`, plan.ID, fmt.Sprintf("fixture-%d", plan.ID))
 		require.NoError(t, err)
@@ -236,9 +237,10 @@ INSERT INTO account_groups(account_id,group_id) VALUES(62,8),(62,11);`)
 		visible, err := svc.ListVisibleResults(ctx, 1, 3)
 		require.NoError(t, err)
 		require.Len(t, visible, 1)
-		require.Equal(t, failed.ID, visible[0].ID, "show the latest failure without falling back to an older successful model check")
-		require.Equal(t, "failed", visible[0].Status)
-		assertSnapshot(t, visible[0], failedCheck, true)
+		require.NotEqual(t, failed.ID, visible[0].ID, "failed requests keep the previous successful model check visible")
+		require.Equal(t, stored[3].ID, visible[0].ID)
+		require.Equal(t, "success", visible[0].Status)
+		assertSnapshot(t, visible[0], checks[3], true)
 		latest := persist(t, plan, "success", &checks[3])
 		visible, err = svc.ListVisibleResults(ctx, 1, 3)
 		require.NoError(t, err)

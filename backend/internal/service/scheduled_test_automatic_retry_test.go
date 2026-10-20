@@ -81,7 +81,7 @@ func TestScheduledTestAutomaticRetryDoesNotRetryMissingAccount(t *testing.T) {
 	requireAutomaticRetrySingleRow(t, results, completed)
 }
 
-func TestScheduledTestAutomaticRetryDoesNotRetryOutputContractFailures(t *testing.T) {
+func TestScheduledTestAutomaticRetryRetriesOutputContractFailuresOnce(t *testing.T) {
 	for _, kind := range []string{"html", "number"} {
 		t.Run(kind, func(t *testing.T) {
 			results := &retryResultRepoStub{updated: make(chan *ScheduledTestResult, 5)}
@@ -99,10 +99,58 @@ func TestScheduledTestAutomaticRetryDoesNotRetryOutputContractFailures(t *testin
 			}})
 			runner.runOnePlan(context.Background(), automaticRetryTestPlan())
 			completed := automaticRetryCompleted(t, results)
-			require.Equal(t, int32(1), calls.Load(), "invalid output must not trigger repeated generation")
+			require.Equal(t, int32(2), calls.Load(), "invalid output gets one retry and then stops")
 			require.Equal(t, "failed", completed.Status)
 			require.Contains(t, completed.ErrorMessage, "expected")
 			requireAutomaticRetrySingleRow(t, results, completed)
+		})
+	}
+}
+
+func TestScheduledTestAutomaticRetryTruncatedUnknownOutput(t *testing.T) {
+	for _, recovered := range []bool{true, false} {
+		t.Run(fmt.Sprint(recovered), func(t *testing.T) {
+			runner := &ScheduledTestRunnerService{automaticRetryBaseDelay: time.Millisecond}
+			calls := 0
+			result := runner.runWithAutomaticRetries(context.Background(), &ScheduledTestPlan{}, nil, func(context.Context) *ScheduledTestResult {
+				calls++
+				r := &ScheduledTestResult{Status: "failed", ErrorMessage: "Unknown error", ResponseText: `<html><body><svg><path fill="#`, ExecutionInfo: &ScheduledTestExecutionInfo{
+					Attempts: []ScheduledTestRequestAttempt{{HTTPStatus: 200}},
+				}}
+				if recovered && calls == 2 {
+					r.Status, r.ErrorMessage, r.ResponseText = "success", "", "<html><body>complete work</body></html>"
+				}
+				runner.applyOutputContract(r, "html")
+				return r
+			})
+			require.Equal(t, 2, calls, "a partial HTTP 200 response gets exactly one retry")
+			require.Len(t, result.ExecutionInfo.Attempts, 2)
+			require.Equal(t, "output_invalid", result.ExecutionInfo.Attempts[0].FailureKind)
+			if recovered {
+				require.Equal(t, "success", result.Status)
+				require.NotEmpty(t, result.OutputHTML)
+				require.Empty(t, result.ExecutionInfo.FailureKind)
+			} else {
+				require.Equal(t, "failed", result.Status)
+				require.Empty(t, result.OutputHTML)
+			}
+		})
+	}
+}
+
+func TestScheduledTestDisplayOnlyRetriesUpstreamFailuresOnce(t *testing.T) {
+	for _, code := range []int{200, 400, 401, 402, 403, 429, 503} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			runner := &ScheduledTestRunnerService{automaticRetryBaseDelay: time.Millisecond}
+			calls := 0
+			result := runner.runWithAutomaticRetries(context.Background(), &ScheduledTestPlan{}, nil, func(context.Context) *ScheduledTestResult {
+				calls++
+				return &ScheduledTestResult{Status: "failed", ErrorMessage: "Unknown error", ExecutionInfo: &ScheduledTestExecutionInfo{
+					Attempts: []ScheduledTestRequestAttempt{{HTTPStatus: code}},
+				}}
+			})
+			require.Equal(t, 2, calls)
+			require.Equal(t, "failed", result.Status)
 		})
 	}
 }
@@ -148,7 +196,7 @@ func TestScheduledTestAutomaticRetrySkipsLaterDefinitionsAfterExhaustion(t *test
 	runner.runOnePlan(context.Background(), plan)
 	first := automaticRetryCompleted(t, results)
 	second := automaticRetryCompleted(t, results)
-	require.Equal(t, int32(1), calls.Load(), "invalid HTML stops this account after one attempt")
+	require.Equal(t, int32(2), calls.Load(), "invalid HTML stops this account after one retry")
 	require.Equal(t, int64(1), *first.TestDefinitionID)
 	require.Equal(t, "failed", first.Status)
 	require.Contains(t, first.ErrorMessage, "expected HTML")
@@ -159,7 +207,9 @@ func TestScheduledTestAutomaticRetrySkipsLaterDefinitionsAfterExhaustion(t *test
 	require.Equal(t, results.created[0].ID, first.ID)
 	require.Equal(t, results.created[1].ID, second.ID)
 	require.Empty(t, results.updated)
-	require.Equal(t, 1, runner.planRepo.(*runnerPlanRepoStub).updated, "one multi-type rule advances its schedule once")
+	planRepo, ok := runner.planRepo.(*runnerPlanRepoStub)
+	require.True(t, ok)
+	require.Equal(t, 1, planRepo.updated, "one multi-type rule advances its schedule once")
 }
 
 func TestScheduledTestCompatibilityCombinationShortCircuitsOnlyImpossibleBranches(t *testing.T) {

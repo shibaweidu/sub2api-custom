@@ -47,7 +47,7 @@ func TestUpstreamErrorRetryWebSocketPreservesCurrentTurn(t *testing.T) {
 						errorsCh <- err
 						return
 					}
-					defer conn.CloseNow()
+					defer func() { _ = conn.CloseNow() }()
 					c, _ := gin.CreateTestContext(httptest.NewRecorder())
 					c.Request = r.WithContext(retryCtx)
 					_, first, err := conn.Read(ctx)
@@ -60,7 +60,7 @@ func TestUpstreamErrorRetryWebSocketPreservesCurrentTurn(t *testing.T) {
 				defer server.Close()
 				client, _, err := coderws.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 				require.NoError(t, err)
-				defer client.CloseNow()
+				defer func() { _ = client.CloseNow() }()
 				require.NoError(t, client.Write(ctx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","input":[{"role":"user","content":"first question"}]}`)))
 				if turns == 2 {
 					_, completed, err := client.Read(ctx)

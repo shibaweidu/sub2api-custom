@@ -693,7 +693,6 @@ readLoop:
 			if billingStatus != 0 {
 				if !billingAccountSideEffectsApplied {
 					s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
-					billingAccountSideEffectsApplied = true
 				}
 			} else {
 				s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
@@ -796,7 +795,6 @@ readLoop:
 					// the provider account balance is never exposed downstream.
 					if !billingAccountSideEffectsApplied {
 						s.handleOpenAIWSFailureAccountSideEffects(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
-						billingAccountSideEffectsApplied = true
 					}
 					lease.MarkBroken()
 					return nil, newUpstreamBillingFailoverError(

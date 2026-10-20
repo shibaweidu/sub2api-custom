@@ -31,11 +31,11 @@ func (r *scheduledTestResultRepository) BeginRun(ctx context.Context, plan *serv
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := lockScheduledTestPlanWrites(ctx, tx); err != nil {
 		return nil, err
 	}
-	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config, excluded_account_ids FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
+	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config, account_ids, auto_publish_results, excluded_account_ids FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +84,7 @@ func (r *scheduledTestResultRepository) BeginRun(ctx context.Context, plan *serv
 			return nil, fmt.Errorf("execution target belongs to a different plan")
 		}
 		input.RunID = runID
+		input.Published = current.AutoPublishResults
 		result, err := createScheduledTestResult(ctx, tx, input)
 		if err != nil {
 			return nil, err
@@ -105,10 +106,13 @@ func scheduledTestSameExecutionPolicy(a, b *service.ScheduledTestPlan) bool {
 	ag, bg := slices.Clone(a.GroupIDs), slices.Clone(b.GroupIDs)
 	slices.Sort(ag)
 	slices.Sort(bg)
+	aa, ba := slices.Clone(a.AccountIDs), slices.Clone(b.AccountIDs)
+	slices.Sort(aa)
+	slices.Sort(ba)
 	ae, be := slices.Clone(a.ExcludedAccountIDs), slices.Clone(b.ExcludedAccountIDs)
 	slices.Sort(ae)
 	slices.Sort(be)
-	return slices.Equal(ae, be) && slices.Equal(ag, bg) && reflect.DeepEqual(a.AccountID, b.AccountID) &&
+	return slices.Equal(ae, be) && slices.Equal(aa, ba) && slices.Equal(ag, bg) && reflect.DeepEqual(a.AccountID, b.AccountID) &&
 		reflect.DeepEqual(a.TestDefinitionIDs, b.TestDefinitionIDs) && reflect.DeepEqual(a.TestDefinitionID, b.TestDefinitionID) &&
 		a.TargetMode == b.TargetMode && a.TestType == b.TestType && a.ModelID == b.ModelID && a.ReasoningEffort == b.ReasoningEffort &&
 		a.Enabled == b.Enabled && a.AutoRecover == b.AutoRecover && protectionConfigSamePolicy(a.Protection, b.Protection)
@@ -128,7 +132,7 @@ func readProtectionAccountSnapshot(ctx context.Context, tx *sql.Tx, accountID in
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {

@@ -31,6 +31,7 @@ const (
 	settingKeyBackupRecords  = "backup_records"
 
 	backupObjectCleanupTimeout = 2 * time.Minute
+	backupOperationTimeout     = 2 * time.Hour
 
 	// backupScheduledLeaderLockKey gates the scheduled full-database backup so
 	// that only one instance in a clustered deployment performs the
@@ -43,9 +44,9 @@ const (
 	backupScheduledLeaderLockKey = "backup:scheduled:leader"
 	// backupScheduledLeaderLockTTL bounds crash recovery only; the lock is
 	// released as soon as the backup finishes. It must exceed the job's
-	// worst-case runtime (the scheduled backup context is bounded at 30m) so the
+	// worst-case runtime (bounded by backupOperationTimeout) so the
 	// lock cannot expire mid-dump and let a peer start a second backup.
-	backupScheduledLeaderLockTTL = 35 * time.Minute
+	backupScheduledLeaderLockTTL = backupOperationTimeout + 5*time.Minute
 )
 
 var (
@@ -547,7 +548,7 @@ func (s *BackupService) runScheduledBackup() {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupOperationTimeout)
 	defer cancel()
 
 	// 多实例保护: 集群部署时只让 leader 执行定时备份, 避免每个实例各自对同一个
@@ -776,7 +777,7 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 
 // executeBackup 后台执行备份（独立于 HTTP context）
 func (s *BackupService) executeBackup(record *BackupRecord, objectStore BackupObjectStore, s3Cfg *BackupS3Config) {
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupOperationTimeout)
 	defer cancel()
 
 	// 阶段1: pg_dump -> gzip 临时文件
@@ -1055,7 +1056,7 @@ func (s *BackupService) StartRestore(ctx context.Context, backupID string) (*Bac
 
 // executeRestore 后台执行恢复
 func (s *BackupService) executeRestore(record *BackupRecord, objectStore BackupObjectStore) {
-	ctx, cancel := context.WithTimeout(s.bgCtx, 30*time.Minute)
+	ctx, cancel := context.WithTimeout(s.bgCtx, backupOperationTimeout)
 	defer cancel()
 
 	if len(record.Parts) > 0 {

@@ -32,7 +32,9 @@ func TestChannelMonitorV2RecentRequestsScopeAndModelMapping(t *testing.T) {
 	require.NotContains(t, query, "gpt-named") // model names must be bound, never interpolated
 	require.Equal(t, start, args[0])
 	var dimensions []channelMonitorV2RecentDimension
-	require.NoError(t, json.Unmarshal([]byte(args[3].(string)), &dimensions))
+	dimensionsJSON, ok := args[3].(string)
+	require.True(t, ok)
+	require.NoError(t, json.Unmarshal([]byte(dimensionsJSON), &dimensions))
 	require.Equal(t, &groupID, dimensions[0].GroupID)
 	require.Nil(t, dimensions[0].Model)
 }
@@ -40,7 +42,7 @@ func TestChannelMonitorV2RecentRequestsScopeAndModelMapping(t *testing.T) {
 func TestChannelMonitorV2RecentRequestsClassifiesWithoutExposingPrivateFields(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	now := time.Now().UTC()
 	rows := sqlmock.NewRows([]string{"idx", "created_at", "model", "is_error", "ttft", "duration", "cache_rate", "type", "owner", "source", "status", "upstream_status", "message"}).
 		AddRow(0, now, "gpt-test", false, 1000, 3500, 0.8, "", "", "", 0, 0, "").
