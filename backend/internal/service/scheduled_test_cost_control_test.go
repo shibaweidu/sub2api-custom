@@ -28,8 +28,8 @@ func TestScheduledTestCostRetryClassification(t *testing.T) {
 		{"API returned 402: payment required", "quota", 1}, {"API returned 429: insufficient_quota", "quota", 1},
 		{"API returned 429: too many requests", "rate_limit", 1}, {"API returned 400: bad input", "request", 1},
 		{"API returned 503: unavailable", "server", 2}, {"connection reset by peer", "network", 2},
-		{"context deadline exceeded", "network", 2}, {"OpenAI response incomplete (max_output_tokens)", "output_limit", 1},
-		{"expected HTML/SVG output", "output_invalid", 1}, {"unrecognized error", "unknown", 1},
+		{"context deadline exceeded", "network", 2}, {"OpenAI response incomplete (max_output_tokens)", "output_limit", 2},
+		{"expected HTML/SVG output", "output_invalid", 2}, {"unrecognized error", "unknown", 1},
 	} {
 		t.Run(tc.kind+tc.message, func(t *testing.T) {
 			runner := &ScheduledTestRunnerService{automaticRetryBaseDelay: time.Millisecond}
@@ -208,7 +208,7 @@ func TestScheduledTestCostAntigravityHasNoNestedRetries(t *testing.T) {
 			}}
 			gateway := &AntigravityGatewayService{}
 			runner := &ScheduledTestRunnerService{automaticRetryBaseDelay: time.Millisecond}
-			result := runner.runWithAutomaticRetries(context.Background(), &ScheduledTestPlan{}, nil, func(ctx context.Context) *ScheduledTestResult {
+			result := runner.runWithAutomaticRetries(context.Background(), &ScheduledTestPlan{Protection: ScheduledTestProtectionConfig{Enabled: true}}, nil, func(ctx context.Context) *ScheduledTestResult {
 				usage := &accountTestUsageCollector{}
 				ctx = context.WithValue(ctx, accountTestUsageKey{}, usage)
 				r, err := gateway.antigravityRetryLoop(antigravityRetryLoopParams{

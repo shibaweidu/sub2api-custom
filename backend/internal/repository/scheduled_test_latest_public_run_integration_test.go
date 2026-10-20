@@ -127,11 +127,11 @@ INSERT INTO account_groups(account_id,group_id) VALUES (90,8),(91,8),(92,8),(93,
 	finish(previous[2], "success")
 	assertVisible(current[0].ID, current[1].ID, current[2].ID, other[0].ID)
 
-	// A failed latest round remains visible instead of falling back to old successes.
+	// Failed work stays private and the previous successful work remains visible.
 	last, err := results.BeginRun(ctx, plan, "two-pm", []*service.ScheduledTestResult{input(plan, 90, candyID, noon.Add(2*time.Hour))})
 	require.NoError(t, err)
 	finish(last[0], "failed")
-	assertVisible(last[0].ID, other[0].ID)
+	assertVisible(current[2].ID, other[0].ID)
 	var eligible int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id IN (90,91,92,93) AND status='active' AND schedulable`).Scan(&eligible))
 	require.Equal(t, 4, eligible, "listing results does not modify account state or scheduling")

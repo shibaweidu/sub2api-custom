@@ -34,6 +34,15 @@ const mountHistory = (results: TestResult[], extra = {}) => mount(AdminTestResul
 })
 
 describe('admin result account history', () => {
+  it('allows an administrator to publish an individual completed result', async () => {
+    const wrapper = mountHistory([result(5, { published: false })])
+    await flushPromises()
+    expect(wrapper.get('[data-result-id="5"]').text()).toContain('Hidden from users')
+    await wrapper.get('[data-result-id="5"] [data-toggle-publish]').trigger('click')
+    expect(wrapper.emitted('publish')?.[0]).toEqual([expect.objectContaining({ id: 5 }), true])
+    wrapper.unmount()
+  })
+
   it('shows model mismatch and missing evidence instead of a successful execution badge', async () => {
     const check = { requested_model: 'alias', upstream_model: 'expected', returned_models: ['different'], match_mode: 'exact' as const, verdict: 'fail' as const, reason: 'mismatch' as const }
     const wrapper = mountHistory([

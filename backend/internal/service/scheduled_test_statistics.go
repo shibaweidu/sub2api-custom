@@ -126,6 +126,7 @@ func (s *ScheduledTestRunnerService) startStatisticsResult(ctx context.Context, 
 	pending := &ScheduledTestResult{
 		TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode, Status: "running",
 		OutputKind: "statistics", AccountID: accountID, ModelID: plan.ModelID, GroupID: plan.GroupID,
+		Published: plan.AutoPublishResults,
 		StartedAt: windowEnd, FinishedAt: windowEnd,
 	}
 	persistCtx, cancel := scheduledTestPersistenceContext()
@@ -246,6 +247,7 @@ func (s *ScheduledTestRunnerService) runStatisticsResult(ctx context.Context, pl
 	result.PlanID, result.TestDefinitionID = plan.ID, plan.TestDefinitionID
 	result.TargetMode, result.OutputKind = plan.TargetMode, "statistics"
 	result.AccountID, result.ModelID, result.GroupID = accountID, plan.ModelID, plan.GroupID
+	result.Published = plan.AutoPublishResults
 	result.StartedAt = started
 	if pending != nil {
 		result.ExecutionInfo = mergeScheduledTestExecution(pending.ExecutionInfo, result.ExecutionInfo)

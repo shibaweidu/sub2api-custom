@@ -1,7 +1,17 @@
 export default {
     tests: {
       strategyGroups: 'Strategy groups',
-      strategyGroupsHint: 'Select 1–100 active groups on the same platform. All schedulable accounts in these groups are tested. Move groups up or down to set their order in user results.',
+      strategyGroupsHint: 'Select 1–100 active groups on the same platform. Move groups up or down to set their order in user results.',
+      strategyAccounts: 'Channels to test',
+      strategyAccountsHint: 'By default, all schedulable accounts in the selected groups are tested. Select accounts to run only those channels.',
+      allStrategyAccounts: 'Restore all accounts in selected groups',
+      autoPublishResults: 'Show results to users immediately after each test',
+      published: 'Shown to users',
+      unpublished: 'Hidden from users',
+      publishResult: 'Show to users',
+      unpublishResult: 'Hide from users',
+      resultPublished: 'Result is now visible to users',
+      resultUnpublished: 'Result is now hidden from users',
       strategyTarget: 'All accounts in the selected groups',
       moveGroupUp: 'Move group up',
       moveGroupDown: 'Move group down',

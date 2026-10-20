@@ -93,6 +93,34 @@ func (_c *ChannelMonitorCreate) SetNillableAccountID(v *int64) *ChannelMonitorCr
 	return _c
 }
 
+// SetProbeAccountID sets the "probe_account_id" field.
+func (_c *ChannelMonitorCreate) SetProbeAccountID(v int64) *ChannelMonitorCreate {
+	_c.mutation.SetProbeAccountID(v)
+	return _c
+}
+
+// SetNillableProbeAccountID sets the "probe_account_id" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableProbeAccountID(v *int64) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetProbeAccountID(*v)
+	}
+	return _c
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (_c *ChannelMonitorCreate) SetQualityGroupID(v int64) *ChannelMonitorCreate {
+	_c.mutation.SetQualityGroupID(v)
+	return _c
+}
+
+// SetNillableQualityGroupID sets the "quality_group_id" field if the given value is not nil.
+func (_c *ChannelMonitorCreate) SetNillableQualityGroupID(v *int64) *ChannelMonitorCreate {
+	if v != nil {
+		_c.SetQualityGroupID(*v)
+	}
+	return _c
+}
+
 // SetAPIMode sets the "api_mode" field.
 func (_c *ChannelMonitorCreate) SetAPIMode(v string) *ChannelMonitorCreate {
 	_c.mutation.SetAPIMode(v)
@@ -521,6 +549,14 @@ func (_c *ChannelMonitorCreate) createSpec() (*ChannelMonitor, *sqlgraph.CreateS
 		_spec.SetField(channelmonitor.FieldAccountID, field.TypeInt64, value)
 		_node.AccountID = &value
 	}
+	if value, ok := _c.mutation.ProbeAccountID(); ok {
+		_spec.SetField(channelmonitor.FieldProbeAccountID, field.TypeInt64, value)
+		_node.ProbeAccountID = &value
+	}
+	if value, ok := _c.mutation.QualityGroupID(); ok {
+		_spec.SetField(channelmonitor.FieldQualityGroupID, field.TypeInt64, value)
+		_node.QualityGroupID = &value
+	}
 	if value, ok := _c.mutation.APIMode(); ok {
 		_spec.SetField(channelmonitor.FieldAPIMode, field.TypeString, value)
 		_node.APIMode = value
@@ -747,6 +783,54 @@ func (u *ChannelMonitorUpsert) AddAccountID(v int64) *ChannelMonitorUpsert {
 // ClearAccountID clears the value of the "account_id" field.
 func (u *ChannelMonitorUpsert) ClearAccountID() *ChannelMonitorUpsert {
 	u.SetNull(channelmonitor.FieldAccountID)
+	return u
+}
+
+// SetProbeAccountID sets the "probe_account_id" field.
+func (u *ChannelMonitorUpsert) SetProbeAccountID(v int64) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldProbeAccountID, v)
+	return u
+}
+
+// UpdateProbeAccountID sets the "probe_account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateProbeAccountID() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldProbeAccountID)
+	return u
+}
+
+// AddProbeAccountID adds v to the "probe_account_id" field.
+func (u *ChannelMonitorUpsert) AddProbeAccountID(v int64) *ChannelMonitorUpsert {
+	u.Add(channelmonitor.FieldProbeAccountID, v)
+	return u
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (u *ChannelMonitorUpsert) ClearProbeAccountID() *ChannelMonitorUpsert {
+	u.SetNull(channelmonitor.FieldProbeAccountID)
+	return u
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (u *ChannelMonitorUpsert) SetQualityGroupID(v int64) *ChannelMonitorUpsert {
+	u.Set(channelmonitor.FieldQualityGroupID, v)
+	return u
+}
+
+// UpdateQualityGroupID sets the "quality_group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsert) UpdateQualityGroupID() *ChannelMonitorUpsert {
+	u.SetExcluded(channelmonitor.FieldQualityGroupID)
+	return u
+}
+
+// AddQualityGroupID adds v to the "quality_group_id" field.
+func (u *ChannelMonitorUpsert) AddQualityGroupID(v int64) *ChannelMonitorUpsert {
+	u.Add(channelmonitor.FieldQualityGroupID, v)
+	return u
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (u *ChannelMonitorUpsert) ClearQualityGroupID() *ChannelMonitorUpsert {
+	u.SetNull(channelmonitor.FieldQualityGroupID)
 	return u
 }
 
@@ -1098,6 +1182,62 @@ func (u *ChannelMonitorUpsertOne) UpdateAccountID() *ChannelMonitorUpsertOne {
 func (u *ChannelMonitorUpsertOne) ClearAccountID() *ChannelMonitorUpsertOne {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.ClearAccountID()
+	})
+}
+
+// SetProbeAccountID sets the "probe_account_id" field.
+func (u *ChannelMonitorUpsertOne) SetProbeAccountID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetProbeAccountID(v)
+	})
+}
+
+// AddProbeAccountID adds v to the "probe_account_id" field.
+func (u *ChannelMonitorUpsertOne) AddProbeAccountID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddProbeAccountID(v)
+	})
+}
+
+// UpdateProbeAccountID sets the "probe_account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateProbeAccountID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateProbeAccountID()
+	})
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (u *ChannelMonitorUpsertOne) ClearProbeAccountID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearProbeAccountID()
+	})
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (u *ChannelMonitorUpsertOne) SetQualityGroupID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetQualityGroupID(v)
+	})
+}
+
+// AddQualityGroupID adds v to the "quality_group_id" field.
+func (u *ChannelMonitorUpsertOne) AddQualityGroupID(v int64) *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddQualityGroupID(v)
+	})
+}
+
+// UpdateQualityGroupID sets the "quality_group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertOne) UpdateQualityGroupID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateQualityGroupID()
+	})
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (u *ChannelMonitorUpsertOne) ClearQualityGroupID() *ChannelMonitorUpsertOne {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearQualityGroupID()
 	})
 }
 
@@ -1652,6 +1792,62 @@ func (u *ChannelMonitorUpsertBulk) UpdateAccountID() *ChannelMonitorUpsertBulk {
 func (u *ChannelMonitorUpsertBulk) ClearAccountID() *ChannelMonitorUpsertBulk {
 	return u.Update(func(s *ChannelMonitorUpsert) {
 		s.ClearAccountID()
+	})
+}
+
+// SetProbeAccountID sets the "probe_account_id" field.
+func (u *ChannelMonitorUpsertBulk) SetProbeAccountID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetProbeAccountID(v)
+	})
+}
+
+// AddProbeAccountID adds v to the "probe_account_id" field.
+func (u *ChannelMonitorUpsertBulk) AddProbeAccountID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddProbeAccountID(v)
+	})
+}
+
+// UpdateProbeAccountID sets the "probe_account_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateProbeAccountID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateProbeAccountID()
+	})
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (u *ChannelMonitorUpsertBulk) ClearProbeAccountID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearProbeAccountID()
+	})
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (u *ChannelMonitorUpsertBulk) SetQualityGroupID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.SetQualityGroupID(v)
+	})
+}
+
+// AddQualityGroupID adds v to the "quality_group_id" field.
+func (u *ChannelMonitorUpsertBulk) AddQualityGroupID(v int64) *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.AddQualityGroupID(v)
+	})
+}
+
+// UpdateQualityGroupID sets the "quality_group_id" field to the value that was provided on create.
+func (u *ChannelMonitorUpsertBulk) UpdateQualityGroupID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.UpdateQualityGroupID()
+	})
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (u *ChannelMonitorUpsertBulk) ClearQualityGroupID() *ChannelMonitorUpsertBulk {
+	return u.Update(func(s *ChannelMonitorUpsert) {
+		s.ClearQualityGroupID()
 	})
 }
 

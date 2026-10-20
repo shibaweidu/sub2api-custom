@@ -64,7 +64,7 @@ func scheduledTestQueuePolicy(queue []*scheduledTestExecutionTarget) string {
 }
 func (s *ScheduledTestRunnerService) deferAccountQueue(ctx context.Context, queue []*scheduledTestExecutionTarget, policy string) bool {
 	automatic, _ := ctx.Value(scheduledTestAutomaticRunKey{}).(bool)
-	if !automatic || len(queue) == 0 || queue[0].accountID == nil {
+	if !automatic || len(queue) == 0 || queue[0].accountID == nil || scheduledTestDisplayOnlyPlan(queue[0].plan) {
 		return false
 	}
 	repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestBackoffRepository)
@@ -94,7 +94,7 @@ func (s *ScheduledTestRunnerService) deferAccountQueue(ctx context.Context, queu
 	return true
 }
 func (s *ScheduledTestRunnerService) recordAccountQueueBackoff(ctx context.Context, queue []*scheduledTestExecutionTarget, policy string, observations []*ScheduledTestResult, stopped, complete bool) {
-	if ctx.Err() != nil || len(queue) == 0 || len(observations) == 0 || queue[0].accountID == nil {
+	if ctx.Err() != nil || len(queue) == 0 || len(observations) == 0 || queue[0].accountID == nil || scheduledTestDisplayOnlyPlan(queue[0].plan) {
 		return
 	}
 	repo, ok := s.scheduledSvc.resultRepo.(ScheduledTestBackoffRepository)
@@ -181,4 +181,10 @@ func (s *ScheduledTestRunnerService) recordAccountQueueBackoff(ctx context.Conte
 	if err := repo.RecordTestBackoff(persistCtx, queue[0].plan, last, policy, failed, retryAfter); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] plan=%d account=%d backoff persistence error: %v", queue[0].plan.ID, *queue[0].accountID, err)
 	}
+}
+
+// Display tests retry within their round and resume at the next scheduled slot.
+// Account protection/recovery retains its independent cooldown policy.
+func scheduledTestDisplayOnlyPlan(plan *ScheduledTestPlan) bool {
+	return plan != nil && !plan.Protection.Enabled && !plan.AutoRecover
 }

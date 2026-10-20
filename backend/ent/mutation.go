@@ -15407,6 +15407,10 @@ type ChannelMonitorMutation struct {
 	check_mode              *string
 	account_id              *int64
 	addaccount_id           *int64
+	probe_account_id        *int64
+	addprobe_account_id     *int64
+	quality_group_id        *int64
+	addquality_group_id     *int64
 	api_mode                *string
 	endpoint                *string
 	api_key_encrypted       *string
@@ -15785,6 +15789,146 @@ func (m *ChannelMonitorMutation) ResetAccountID() {
 	m.account_id = nil
 	m.addaccount_id = nil
 	delete(m.clearedFields, channelmonitor.FieldAccountID)
+}
+
+// SetProbeAccountID sets the "probe_account_id" field.
+func (m *ChannelMonitorMutation) SetProbeAccountID(i int64) {
+	m.probe_account_id = &i
+	m.addprobe_account_id = nil
+}
+
+// ProbeAccountID returns the value of the "probe_account_id" field in the mutation.
+func (m *ChannelMonitorMutation) ProbeAccountID() (r int64, exists bool) {
+	v := m.probe_account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProbeAccountID returns the old "probe_account_id" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldProbeAccountID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProbeAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProbeAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProbeAccountID: %w", err)
+	}
+	return oldValue.ProbeAccountID, nil
+}
+
+// AddProbeAccountID adds i to the "probe_account_id" field.
+func (m *ChannelMonitorMutation) AddProbeAccountID(i int64) {
+	if m.addprobe_account_id != nil {
+		*m.addprobe_account_id += i
+	} else {
+		m.addprobe_account_id = &i
+	}
+}
+
+// AddedProbeAccountID returns the value that was added to the "probe_account_id" field in this mutation.
+func (m *ChannelMonitorMutation) AddedProbeAccountID() (r int64, exists bool) {
+	v := m.addprobe_account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearProbeAccountID clears the value of the "probe_account_id" field.
+func (m *ChannelMonitorMutation) ClearProbeAccountID() {
+	m.probe_account_id = nil
+	m.addprobe_account_id = nil
+	m.clearedFields[channelmonitor.FieldProbeAccountID] = struct{}{}
+}
+
+// ProbeAccountIDCleared returns if the "probe_account_id" field was cleared in this mutation.
+func (m *ChannelMonitorMutation) ProbeAccountIDCleared() bool {
+	_, ok := m.clearedFields[channelmonitor.FieldProbeAccountID]
+	return ok
+}
+
+// ResetProbeAccountID resets all changes to the "probe_account_id" field.
+func (m *ChannelMonitorMutation) ResetProbeAccountID() {
+	m.probe_account_id = nil
+	m.addprobe_account_id = nil
+	delete(m.clearedFields, channelmonitor.FieldProbeAccountID)
+}
+
+// SetQualityGroupID sets the "quality_group_id" field.
+func (m *ChannelMonitorMutation) SetQualityGroupID(i int64) {
+	m.quality_group_id = &i
+	m.addquality_group_id = nil
+}
+
+// QualityGroupID returns the value of the "quality_group_id" field in the mutation.
+func (m *ChannelMonitorMutation) QualityGroupID() (r int64, exists bool) {
+	v := m.quality_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQualityGroupID returns the old "quality_group_id" field's value of the ChannelMonitor entity.
+// If the ChannelMonitor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChannelMonitorMutation) OldQualityGroupID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQualityGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQualityGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQualityGroupID: %w", err)
+	}
+	return oldValue.QualityGroupID, nil
+}
+
+// AddQualityGroupID adds i to the "quality_group_id" field.
+func (m *ChannelMonitorMutation) AddQualityGroupID(i int64) {
+	if m.addquality_group_id != nil {
+		*m.addquality_group_id += i
+	} else {
+		m.addquality_group_id = &i
+	}
+}
+
+// AddedQualityGroupID returns the value that was added to the "quality_group_id" field in this mutation.
+func (m *ChannelMonitorMutation) AddedQualityGroupID() (r int64, exists bool) {
+	v := m.addquality_group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearQualityGroupID clears the value of the "quality_group_id" field.
+func (m *ChannelMonitorMutation) ClearQualityGroupID() {
+	m.quality_group_id = nil
+	m.addquality_group_id = nil
+	m.clearedFields[channelmonitor.FieldQualityGroupID] = struct{}{}
+}
+
+// QualityGroupIDCleared returns if the "quality_group_id" field was cleared in this mutation.
+func (m *ChannelMonitorMutation) QualityGroupIDCleared() bool {
+	_, ok := m.clearedFields[channelmonitor.FieldQualityGroupID]
+	return ok
+}
+
+// ResetQualityGroupID resets all changes to the "quality_group_id" field.
+func (m *ChannelMonitorMutation) ResetQualityGroupID() {
+	m.quality_group_id = nil
+	m.addquality_group_id = nil
+	delete(m.clearedFields, channelmonitor.FieldQualityGroupID)
 }
 
 // SetAPIMode sets the "api_mode" field.
@@ -16636,7 +16780,7 @@ func (m *ChannelMonitorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChannelMonitorMutation) Fields() []string {
-	fields := make([]string, 0, 21)
+	fields := make([]string, 0, 23)
 	if m.created_at != nil {
 		fields = append(fields, channelmonitor.FieldCreatedAt)
 	}
@@ -16654,6 +16798,12 @@ func (m *ChannelMonitorMutation) Fields() []string {
 	}
 	if m.account_id != nil {
 		fields = append(fields, channelmonitor.FieldAccountID)
+	}
+	if m.probe_account_id != nil {
+		fields = append(fields, channelmonitor.FieldProbeAccountID)
+	}
+	if m.quality_group_id != nil {
+		fields = append(fields, channelmonitor.FieldQualityGroupID)
 	}
 	if m.api_mode != nil {
 		fields = append(fields, channelmonitor.FieldAPIMode)
@@ -16720,6 +16870,10 @@ func (m *ChannelMonitorMutation) Field(name string) (ent.Value, bool) {
 		return m.CheckMode()
 	case channelmonitor.FieldAccountID:
 		return m.AccountID()
+	case channelmonitor.FieldProbeAccountID:
+		return m.ProbeAccountID()
+	case channelmonitor.FieldQualityGroupID:
+		return m.QualityGroupID()
 	case channelmonitor.FieldAPIMode:
 		return m.APIMode()
 	case channelmonitor.FieldEndpoint:
@@ -16771,6 +16925,10 @@ func (m *ChannelMonitorMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldCheckMode(ctx)
 	case channelmonitor.FieldAccountID:
 		return m.OldAccountID(ctx)
+	case channelmonitor.FieldProbeAccountID:
+		return m.OldProbeAccountID(ctx)
+	case channelmonitor.FieldQualityGroupID:
+		return m.OldQualityGroupID(ctx)
 	case channelmonitor.FieldAPIMode:
 		return m.OldAPIMode(ctx)
 	case channelmonitor.FieldEndpoint:
@@ -16851,6 +17009,20 @@ func (m *ChannelMonitorMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAccountID(v)
+		return nil
+	case channelmonitor.FieldProbeAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProbeAccountID(v)
+		return nil
+	case channelmonitor.FieldQualityGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQualityGroupID(v)
 		return nil
 	case channelmonitor.FieldAPIMode:
 		v, ok := value.(string)
@@ -16968,6 +17140,12 @@ func (m *ChannelMonitorMutation) AddedFields() []string {
 	if m.addaccount_id != nil {
 		fields = append(fields, channelmonitor.FieldAccountID)
 	}
+	if m.addprobe_account_id != nil {
+		fields = append(fields, channelmonitor.FieldProbeAccountID)
+	}
+	if m.addquality_group_id != nil {
+		fields = append(fields, channelmonitor.FieldQualityGroupID)
+	}
 	if m.addinterval_seconds != nil {
 		fields = append(fields, channelmonitor.FieldIntervalSeconds)
 	}
@@ -16987,6 +17165,10 @@ func (m *ChannelMonitorMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case channelmonitor.FieldAccountID:
 		return m.AddedAccountID()
+	case channelmonitor.FieldProbeAccountID:
+		return m.AddedProbeAccountID()
+	case channelmonitor.FieldQualityGroupID:
+		return m.AddedQualityGroupID()
 	case channelmonitor.FieldIntervalSeconds:
 		return m.AddedIntervalSeconds()
 	case channelmonitor.FieldJitterSeconds:
@@ -17008,6 +17190,20 @@ func (m *ChannelMonitorMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddAccountID(v)
+		return nil
+	case channelmonitor.FieldProbeAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddProbeAccountID(v)
+		return nil
+	case channelmonitor.FieldQualityGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddQualityGroupID(v)
 		return nil
 	case channelmonitor.FieldIntervalSeconds:
 		v, ok := value.(int)
@@ -17041,6 +17237,12 @@ func (m *ChannelMonitorMutation) ClearedFields() []string {
 	if m.FieldCleared(channelmonitor.FieldAccountID) {
 		fields = append(fields, channelmonitor.FieldAccountID)
 	}
+	if m.FieldCleared(channelmonitor.FieldProbeAccountID) {
+		fields = append(fields, channelmonitor.FieldProbeAccountID)
+	}
+	if m.FieldCleared(channelmonitor.FieldQualityGroupID) {
+		fields = append(fields, channelmonitor.FieldQualityGroupID)
+	}
 	if m.FieldCleared(channelmonitor.FieldGroupName) {
 		fields = append(fields, channelmonitor.FieldGroupName)
 	}
@@ -17069,6 +17271,12 @@ func (m *ChannelMonitorMutation) ClearField(name string) error {
 	switch name {
 	case channelmonitor.FieldAccountID:
 		m.ClearAccountID()
+		return nil
+	case channelmonitor.FieldProbeAccountID:
+		m.ClearProbeAccountID()
+		return nil
+	case channelmonitor.FieldQualityGroupID:
+		m.ClearQualityGroupID()
 		return nil
 	case channelmonitor.FieldGroupName:
 		m.ClearGroupName()
@@ -17107,6 +17315,12 @@ func (m *ChannelMonitorMutation) ResetField(name string) error {
 		return nil
 	case channelmonitor.FieldAccountID:
 		m.ResetAccountID()
+		return nil
+	case channelmonitor.FieldProbeAccountID:
+		m.ResetProbeAccountID()
+		return nil
+	case channelmonitor.FieldQualityGroupID:
+		m.ResetQualityGroupID()
 		return nil
 	case channelmonitor.FieldAPIMode:
 		m.ResetAPIMode()

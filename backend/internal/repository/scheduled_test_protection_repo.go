@@ -512,6 +512,7 @@ const protectionVotingQuery = `SELECT ` + protectionVoteResultJSON + `,s.rule_co
 	     WHERE current_rule->>'test_definition_id'=s.test_definition_id::text
 	     AND current_rule->'vote'->>'enabled'='true' AND current_rule->'vote'->>'public_enabled'='true')
 	 AND s.completed AND r.status IN ('success','passed')
+	 AND r.published
 	 AND r.started_at=s.result_started_at AND r.started_at>=s.round_started_at
 	 AND (NULLIF(BTRIM(r.response_text),'') IS NOT NULL OR NULLIF(BTRIM(r.output_html),'') IS NOT NULL OR r.output_numeric IS NOT NULL)
 	 AND a.deleted_at IS NULL AND a.schedulable=TRUE AND a.status IN ('active','quality_paused')

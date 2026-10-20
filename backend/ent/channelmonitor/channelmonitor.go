@@ -27,6 +27,10 @@ const (
 	FieldCheckMode = "check_mode"
 	// FieldAccountID holds the string denoting the account_id field in the database.
 	FieldAccountID = "account_id"
+	// FieldProbeAccountID holds the string denoting the probe_account_id field in the database.
+	FieldProbeAccountID = "probe_account_id"
+	// FieldQualityGroupID holds the string denoting the quality_group_id field in the database.
+	FieldQualityGroupID = "quality_group_id"
 	// FieldAPIMode holds the string denoting the api_mode field in the database.
 	FieldAPIMode = "api_mode"
 	// FieldEndpoint holds the string denoting the endpoint field in the database.
@@ -97,6 +101,8 @@ var Columns = []string{
 	FieldProvider,
 	FieldCheckMode,
 	FieldAccountID,
+	FieldProbeAccountID,
+	FieldQualityGroupID,
 	FieldAPIMode,
 	FieldEndpoint,
 	FieldAPIKeyEncrypted,
@@ -236,6 +242,16 @@ func ByCheckMode(opts ...sql.OrderTermOption) OrderOption {
 // ByAccountID orders the results by the account_id field.
 func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
+}
+
+// ByProbeAccountID orders the results by the probe_account_id field.
+func ByProbeAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProbeAccountID, opts...).ToFunc()
+}
+
+// ByQualityGroupID orders the results by the quality_group_id field.
+func ByQualityGroupID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldQualityGroupID, opts...).ToFunc()
 }
 
 // ByAPIMode orders the results by the api_mode field.

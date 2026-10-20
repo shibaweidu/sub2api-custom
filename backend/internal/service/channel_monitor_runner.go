@@ -147,7 +147,7 @@ func (r *ChannelMonitorRunner) Schedule(m *ChannelMonitor) {
 	if r == nil || m == nil {
 		return
 	}
-	if !m.Enabled || m.APIKeyDecryptFailed {
+	if !m.Enabled || (m.APIKeyDecryptFailed && m.ProbeAccountID == nil) {
 		r.Unschedule(m.ID)
 		return
 	}

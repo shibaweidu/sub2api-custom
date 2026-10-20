@@ -556,6 +556,7 @@ func (s *ScheduledTestRunnerService) saveSkippedAccountResultWithReason(ctx cont
 		PlanID: plan.ID, TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode,
 		OutputKind: outputKind, AccountID: &accountID, ModelID: plan.ModelID,
 		ReasoningEffort: plan.ReasoningEffort, GroupID: plan.GroupID, Status: "running",
+		Published: plan.AutoPublishResults,
 		StartedAt: now, FinishedAt: now,
 	}
 	persistCtx, cancel := scheduledTestPersistenceContext()
@@ -590,6 +591,7 @@ func (s *ScheduledTestRunnerService) startAccountResult(ctx context.Context, pla
 		ModelID:          plan.ModelID,
 		ReasoningEffort:  plan.ReasoningEffort,
 		GroupID:          plan.GroupID,
+		Published:        plan.AutoPublishResults,
 		StartedAt:        started,
 		FinishedAt:       started,
 	}
@@ -659,6 +661,7 @@ func (s *ScheduledTestRunnerService) runAccountWithResult(ctx context.Context, p
 	})
 	result.AccountID = &accountID
 	result.PlanID = plan.ID
+	result.Published = plan.AutoPublishResults
 	if pending != nil {
 		result.ExecutionInfo = mergeScheduledTestExecution(pending.ExecutionInfo, result.ExecutionInfo)
 		result.RunID = pending.RunID
@@ -719,7 +722,7 @@ func (s *ScheduledTestRunnerService) savePlanFailure(ctx context.Context, plan *
 	if cause != nil {
 		errorMessage = cause.Error()
 	}
-	result := &ScheduledTestResult{Status: "running", TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode, OutputKind: outputKind, GroupID: plan.GroupID, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, StartedAt: now, FinishedAt: now}
+	result := &ScheduledTestResult{Status: "running", TestDefinitionID: plan.TestDefinitionID, TargetMode: plan.TargetMode, OutputKind: outputKind, GroupID: plan.GroupID, ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, Published: plan.AutoPublishResults, StartedAt: now, FinishedAt: now}
 	persistCtx, cancel := scheduledTestPersistenceContext()
 	defer cancel()
 	created, err := s.scheduledSvc.StartResult(persistCtx, plan.ID, result)
@@ -760,6 +763,7 @@ func (s *ScheduledTestRunnerService) applyOutputContract(result *ScheduledTestRe
 	case "html":
 		html := extractScheduledTestHTML(result.ResponseText)
 		if html == "" {
+			markScheduledTestInvalidOutput(result)
 			if result.Status == "success" {
 				result.Status = "failed"
 			}
@@ -775,12 +779,25 @@ func (s *ScheduledTestRunnerService) applyOutputContract(result *ScheduledTestRe
 			result.OutputNumeric = &n
 			return
 		}
+		markScheduledTestInvalidOutput(result)
 		if result.Status == "success" {
 			result.Status = "failed"
 		}
 		if result.ErrorMessage == "" {
 			result.ErrorMessage = "expected numeric output"
 		}
+	}
+}
+
+// A partial HTTP 200 response may carry only "Unknown error". Preserve real
+// transport/auth errors, but make malformed output eligible for one retry.
+func markScheduledTestInvalidOutput(result *ScheduledTestResult) {
+	kind := scheduledTestFailureKind(result)
+	if (kind == "" || kind == "unknown") && (result.Status == "success" || strings.TrimSpace(result.ResponseText) != "") {
+		if result.ExecutionInfo == nil {
+			result.ExecutionInfo = newScheduledTestExecutionInfo()
+		}
+		result.ExecutionInfo.FailureKind = "output_invalid"
 	}
 }
 
@@ -1072,6 +1089,7 @@ func (s *ScheduledTestRunnerService) RetryAccount(ctx context.Context, plan *Sch
 		TestDefinitionID: previous.TestDefinitionID, TargetMode: plan.TargetMode,
 		Status: "running", OutputKind: outputKind, AccountID: &accountID,
 		ModelID: plan.ModelID, ReasoningEffort: plan.ReasoningEffort, GroupID: plan.GroupID,
+		Published: plan.AutoPublishResults,
 		StartedAt: started, FinishedAt: started,
 	}
 	if err := s.scheduledSvc.RestartFailedResult(ctx, pending); err != nil {

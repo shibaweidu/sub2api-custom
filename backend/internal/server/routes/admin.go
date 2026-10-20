@@ -777,6 +777,7 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/test-plans/:id/results", h.Admin.ScheduledTest.ListResults)
 	admin.POST("/test-plans/:id/run", h.Admin.ScheduledTest.RunNow)
 	admin.DELETE("/test-results/:id", h.Admin.ScheduledTest.DeleteResult)
+	admin.PUT("/test-results/:id/publish", h.Admin.ScheduledTest.SetResultPublished)
 	admin.POST("/test-results/:id/retry", h.Admin.ScheduledTest.RetryResult)
 	admin.GET("/test-reviews", h.Admin.ScheduledTest.ListAdminReviews)
 	admin.POST("/test-results/:id/decision", h.Admin.ScheduledTest.DecideResult)

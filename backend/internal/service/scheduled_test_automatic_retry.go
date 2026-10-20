@@ -15,9 +15,7 @@ const scheduledTestAutomaticRetries = 1
 
 var scheduledTestHTTPError = regexp.MustCompile(`(?i)(?:returned|status[=: ]+)\s*([45][0-9]{2})`)
 
-// Only transient transport/server failures may spend one additional request.
-// Rate limits are deferred by the scheduler; unknown, permanent and output
-// validation failures never trigger repeated generation.
+// Classify execution failures separately from a completed quality verdict.
 func scheduledTestFailureKind(result *ScheduledTestResult) string {
 	if result == nil {
 		return "unknown"
@@ -79,7 +77,7 @@ func scheduledTestFailureKind(result *ScheduledTestResult) string {
 			return "output_invalid"
 		}
 	}
-	for _, text := range []string{"context deadline exceeded", "timeout", "connection reset", "connection refused", "unexpected eof", "stream ended before", "stream read error", "temporary"} {
+	for _, text := range []string{"context deadline exceeded", "timeout", "connection reset", "connection refused", "unexpected eof", "stream ended before", "stream read error", "stream_read_error", "temporary"} {
 		if strings.Contains(message, text) {
 			return "network"
 		}
@@ -122,7 +120,13 @@ func (s *ScheduledTestRunnerService) runWithAutomaticRetries(ctx context.Context
 		if ctx.Err() != nil {
 			return finishCanceled()
 		}
-		if kind == "" || attempt >= scheduledTestAutomaticRetries || (kind != "network" && kind != "server") {
+		retryable := kind == "network" || kind == "server" || kind == "output_invalid" || kind == "output_limit"
+		// A display-only test gets one retry for any failed upstream request.
+		// Configuration/eligibility errors have no request attempt to repeat.
+		if scheduledTestDisplayOnlyPlan(plan) && len(result.ExecutionInfo.Attempts) > 0 && kind != "canceled" {
+			retryable = true
+		}
+		if kind == "" || attempt >= scheduledTestAutomaticRetries || !retryable {
 			return result
 		}
 		if history.RetryAfter != nil && history.RetryAfter.After(time.Now()) {

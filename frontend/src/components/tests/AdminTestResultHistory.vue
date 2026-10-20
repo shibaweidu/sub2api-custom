@@ -41,11 +41,13 @@
                 <Icon :name="expanded.has(result.id) ? 'chevronDown' : 'chevronRight'" size="sm" class="mt-0.5 shrink-0 text-gray-400" />
                 <span class="min-w-0 flex-1">
                   <span class="flex flex-wrap items-center gap-2"><strong class="break-words text-sm font-semibold text-gray-900 dark:text-white">{{ resultTypeName(result) }}</strong><span :class="statusClass(result)">{{ statusLabel(result) }}</span></span>
+                  <span v-if="result.id > 0" class="mt-1 block text-xs" :class="result.published ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'">{{ t(result.published ? 'admin.tests.published' : 'admin.tests.unpublished') }}</span>
                   <span class="mt-1 block break-words text-xs text-gray-500 dark:text-gray-400">{{ result.model_id || '-' }}<template v-if="result.reasoning_effort"> · {{ t('admin.tests.reasoningEffort') }}: {{ result.reasoning_effort }}</template></span>
                   <span class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400"><time :datetime="resultTime(result)">{{ formatDate(resultTime(result)) }}</time><span v-if="result.output_kind !== 'statistics' || isRunning(result)" class="tabular-nums">{{ resultDuration(result) }}</span><span v-if="result.id > 0" class="tabular-nums">#{{ result.id }}</span></span>
                 </span>
               </button>
               <div class="flex shrink-0 gap-1">
+                <button v-if="result.id > 0 && (result.published || ['success', 'passed'].includes(result.status)) && !isRunning(result)" type="button" class="btn btn-secondary h-8 w-8 p-0" :title="t(result.published ? 'admin.tests.unpublishResult' : 'admin.tests.publishResult')" :aria-label="t(result.published ? 'admin.tests.unpublishResult' : 'admin.tests.publishResult')" :disabled="publishingResultId === result.id || deletingResultId === result.id" data-toggle-publish @click="emit('publish', result, !result.published)"><Icon :name="result.published ? 'eyeOff' : 'eye'" size="sm" /></button>
                 <button v-if="result.id > 0 && result.status === 'failed' && result.account_id" type="button" class="btn btn-secondary h-8 w-8 p-0" :title="t('admin.tests.retry')" :aria-label="t('admin.tests.retry')" :disabled="retryingResultId === result.id || deletingResultId === result.id" data-retry-result @click="emit('retry', result)"><Icon name="refresh" size="sm" :class="{ 'animate-spin': retryingResultId === result.id }" /></button>
                 <button v-if="result.id > 0" type="button" class="btn btn-secondary h-8 w-8 p-0 text-red-600 dark:text-red-400" :title="t('common.delete')" :aria-label="t('common.delete')" :disabled="deletingResultId === result.id || retryingResultId === result.id" data-delete-result @click="emit('delete', result)"><Icon name="trash" size="sm" /></button>
               </div>
@@ -55,7 +57,7 @@
             <TestExecutionUsage :info="result.execution_info" class="ml-6 mt-2" />
             <p v-if="result.protection_decision" class="ml-6 mt-2 break-words text-xs text-gray-500 dark:text-gray-400" data-protection-decision>{{ protectionDecisionLabel(result) }}</p>
             <div v-if="expanded.has(result.id)" :id="`admin-test-output-${result.id}`" class="mt-3 min-w-0 sm:ml-6" data-result-detail>
-              <p v-if="result.error_message" class="mb-3 whitespace-pre-wrap break-words text-sm" :class="isSkippedResult(result) ? 'text-amber-700 dark:text-amber-300' : 'text-red-600 dark:text-red-400'" role="alert">{{ result.error_message }}</p>
+              <p v-if="result.error_message" class="mb-3 max-h-24 overflow-hidden whitespace-pre-wrap break-words text-sm [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]" :class="isSkippedResult(result) ? 'text-amber-700 dark:text-amber-300' : 'text-red-600 dark:text-red-400'" role="alert">{{ result.error_message }}</p>
               <TestResultOutput :result="result" />
             </div>
           </article>
@@ -75,7 +77,7 @@ import Pagination from '@/components/common/Pagination.vue'
 import TestExecutionUsage from '@/components/tests/TestExecutionUsage.vue'
 import TestResultOutput from '@/components/tests/TestResultOutput.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   results: TestResult[]
   accounts: AccountListItem[]
   types: TestType[]
@@ -84,8 +86,9 @@ const props = defineProps<{
   loading: boolean
   retryingResultId: number | null
   deletingResultId: number | null
-}>()
-const emit = defineEmits<{ retry: [result: TestResult]; delete: [result: TestResult] }>()
+  publishingResultId?: number | null
+}>(), { publishingResultId: null })
+const emit = defineEmits<{ retry: [result: TestResult]; delete: [result: TestResult]; publish: [result: TestResult, published: boolean] }>()
 const { t } = useI18n()
 const accountSearch = ref('')
 const selectedKey = ref('')

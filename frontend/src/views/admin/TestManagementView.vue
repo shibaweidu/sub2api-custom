@@ -72,6 +72,19 @@
           </ol>
           <p v-if="editingPlan.group_ids.length && !validStrategyGroups(editingPlan.group_ids)" role="alert" class="text-xs text-red-600 dark:text-red-400">{{ t('admin.tests.invalidStrategyGroups') }}</p>
         </fieldset>
+        <fieldset class="space-y-2 sm:col-span-2" data-plan-accounts>
+          <legend class="input-label">{{ t('admin.tests.strategyAccounts') }}</legend>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.tests.strategyAccountsHint') }}</p>
+          <div v-if="!editingPlan.group_ids.length" class="text-sm text-gray-500">{{ t('admin.tests.selectGroupFirst') }}</div>
+          <div v-else class="max-h-56 space-y-1 overflow-y-auto rounded border border-gray-200 p-2 dark:border-dark-700">
+            <label v-for="account in selectableAccounts" :key="account.id" class="flex items-center gap-2 py-1 text-sm text-gray-700 dark:text-gray-300">
+              <input v-model="editingPlan.account_ids" type="checkbox" :value="account.id" />
+              <span class="min-w-0 flex-1 truncate">{{ account.name || t('admin.tests.account') }}</span><span class="shrink-0 text-xs text-gray-500">#{{ account.id }}</span>
+            </label>
+            <p v-if="!selectableAccounts.length" class="py-2 text-sm text-gray-500">{{ t('common.noData') }}</p>
+          </div>
+          <button v-if="editingPlan.account_ids?.length" type="button" class="text-xs font-medium text-primary-600 hover:underline" @click="editingPlan.account_ids = []">{{ t('admin.tests.allStrategyAccounts') }}</button>
+        </fieldset>
         <label class="input-label">{{ t('admin.tests.model') }}<Select v-model="editingPlan.model_id" :options="modelOptions" :loading="modelOptionsLoading" searchable :disabled="!editingPlan.group_ids.length || modelOptionsLoading" :placeholder="editingPlan.group_ids.length ? t('admin.tests.model') : t('admin.tests.selectGroupFirst')" class="mt-1" /><span class="mt-1 block text-xs font-normal text-gray-500">{{ t('admin.tests.commonModelsHint') }}</span></label>
         <p v-if="editingPlan.group_ids.length && !modelOptionsLoading && !modelOptions.length" class="text-xs text-amber-700 dark:text-amber-300" data-no-common-model>{{ t('admin.tests.noCommonModels') }}</p>
         <label v-if="reasoningEffortOptions.length" class="input-label">{{ t('admin.tests.reasoningEffort') }}<select v-model="editingPlan.reasoning_effort" class="input mt-1 w-full"><option :value="null">{{ t('admin.tests.reasoningEffortDefault') }}</option><option v-for="effort in reasoningEffortOptions" :key="effort" :value="effort">{{ effort }}</option></select><span class="mt-1 block text-xs font-normal text-gray-500">{{ t('admin.tests.reasoningEffortHint') }}</span></label>
@@ -79,6 +92,7 @@
         <TestProtectionEditor v-model="editingPlan.protection" :types="selectedProtectionTypes" :groups="protectionGroups" class="sm:col-span-2" />
         <label class="input-label">{{ t('admin.tests.maxResults') }}<input v-model.number="editingPlan.max_results" min="1" type="number" class="input mt-1 w-full" /></label>
         <label class="flex items-center gap-2 pt-5 text-sm"><input v-model="editingPlan.enabled" type="checkbox" /> {{ t('common.enabled') }}</label>
+        <label class="flex items-center gap-2 text-sm sm:col-span-2"><input v-model="editingPlan.auto_publish_results" type="checkbox" data-auto-publish-results /> {{ t('admin.tests.autoPublishResults') }}</label>
       </div>
       <template #footer><button class="btn btn-secondary" @click="editingPlan = null">{{ t('common.cancel') }}</button><button class="btn btn-primary" :disabled="saving || !canSavePlan" @click="savePlan">{{ t('common.save') }}</button></template>
     </BaseDialog>
@@ -92,7 +106,7 @@
           </div>
           <button class="btn btn-secondary btn-sm" :disabled="resultsLoading" @click="refreshResults"><Icon name="refresh" size="sm" />{{ t('common.refresh') }}</button>
         </div>
-        <AdminTestResultHistory :key="resultPlan.id" :results="results" :accounts="accounts" :types="types" :now="resultsNow" :history="resultsHistory" :loading="resultsLoading" :retrying-result-id="retryingResultId" :deleting-result-id="deletingResultId" @retry="retryResult" @delete="removeResult" />
+        <AdminTestResultHistory :key="resultPlan.id" :results="results" :accounts="accounts" :types="types" :now="resultsNow" :history="resultsHistory" :loading="resultsLoading" :retrying-result-id="retryingResultId" :deleting-result-id="deletingResultId" :publishing-result-id="publishingResultId" @retry="retryResult" @delete="removeResult" @publish="toggleResultPublished" />
       </div>
     </BaseDialog>
   </AppLayout>
@@ -139,6 +153,7 @@ let resultsRequest = 0
 const pendingRuns = ref(new Map<number, TestResult[]>())
 const deletingResultId = ref<number | null>(null)
 const retryingResultId = ref<number | null>(null)
+const publishingResultId = ref<number | null>(null)
 const editingType = ref<(CreateTestTypeRequest & { id?: number }) | null>(null)
 const editingPlan = ref<(CreateTestPlanRequest & { id?: number; protection: TestProtectionConfig; migration_note?: string }) | null>(null)
 const resultPlan = ref<TestPlan | null>(null)
@@ -173,6 +188,10 @@ const validStrategyGroups = (ids: number[]) => {
     && selected.every(group => group.status === 'active' && group.platform !== 'composite' && group.platform === selected[0].platform)
 }
 const protectionGroups = computed(() => strategyGroups(editingPlan.value?.group_ids || []).filter(group => group.status === 'active' && group.platform !== 'composite'))
+const selectableAccounts = computed(() => {
+  const groupIDs = new Set(editingPlan.value?.group_ids || [])
+  return accounts.value.filter(account => (account.group_ids || []).some(id => groupIDs.has(id)))
+})
 const selectableGroup = (group: AdminGroup) => {
   const selected = strategyGroups(editingPlan.value?.group_ids || [])
   return group.status === 'active' && group.platform !== 'composite' && (!selected.length || group.platform === selected[0].platform)
@@ -307,7 +326,7 @@ const removeType = async (type: TestType) => { if (!window.confirm(`${t('common.
 
 const planPayload = (plan: TestPlan): CreateTestPlanRequest => ({
   name: plan.name || '', sort_order: plan.sort_order ?? 0,
-  group_ids: [...(plan.group_ids || [])], test_definition_ids: planTypeIDs(plan),
+  group_ids: [...(plan.group_ids || [])], account_ids: [...(plan.account_ids || [])], auto_publish_results: plan.auto_publish_results ?? true, test_definition_ids: planTypeIDs(plan),
   model_id: plan.model_id || '', reasoning_effort: plan.reasoning_effort ?? null,
   cron_expression: plan.cron_expression || '0 * * * *', enabled: plan.enabled,
   schedule: copyTestSchedule(plan.schedule),
@@ -316,7 +335,7 @@ const planPayload = (plan: TestPlan): CreateTestPlanRequest => ({
 const openPlan = (plan?: TestPlan) => {
   editingPlan.value = plan
     ? { ...planPayload(plan), id: plan.id, migration_note: plan.migration_note, protection: copyTestProtection(plan.protection) }
-    : { name: '', sort_order: plans.value.length ? Math.max(...plans.value.map(item => item.sort_order ?? 0)) + 1 : 0, test_definition_ids: [], group_ids: [], model_id: '', reasoning_effort: null, cron_expression: '0 * * * *', schedule: defaultTestSchedule(), enabled: true, max_results: 50, protection: { enabled: false, mode: 'all_pass', rules: [] } }
+    : { name: '', sort_order: plans.value.length ? Math.max(...plans.value.map(item => item.sort_order ?? 0)) + 1 : 0, test_definition_ids: [], group_ids: [], account_ids: [], auto_publish_results: true, model_id: '', reasoning_effort: null, cron_expression: '0 * * * *', schedule: defaultTestSchedule(), enabled: true, max_results: 50, protection: { enabled: false, mode: 'all_pass', rules: [] } }
 }
 const savePlan = async () => {
   if (!editingPlan.value || !canSavePlan.value) return
@@ -462,6 +481,19 @@ const removeResult = async (result: TestResult) => {
     deletingResultId.value = null
   }
 }
+const toggleResultPublished = async (result: TestResult, published: boolean) => {
+  if (!result.id || publishingResultId.value !== null) return
+  publishingResultId.value = result.id
+  try {
+    await adminAPI.tests.setResultPublished(result.id, published)
+    result.published = published
+    app.showSuccess(t(published ? 'admin.tests.resultPublished' : 'admin.tests.resultUnpublished'))
+  } catch (error) {
+    reportError(error)
+  } finally {
+    publishingResultId.value = null
+  }
+}
 const retryResult = async (result: TestResult) => {
   if (!result.id || !result.account_id || retryingResultId.value !== null) return
   const planID = resultPlan.value?.id
@@ -499,7 +531,14 @@ watch(reasoningEffortOptions, choices => {
 })
 watch(
   () => editingPlan.value ? JSON.stringify([...editingPlan.value.group_ids].sort((a, b) => a - b)) : undefined,
-  () => { void loadModelOptions() },
+  () => {
+    const plan = editingPlan.value
+    if (plan) {
+      const allowed = new Set(selectableAccounts.value.map(account => account.id))
+      plan.account_ids = (plan.account_ids || []).filter(id => allowed.has(id))
+    }
+    void loadModelOptions()
+  },
 )
 watch(resultPlan, plan => {
   clearInterval(resultTimer)

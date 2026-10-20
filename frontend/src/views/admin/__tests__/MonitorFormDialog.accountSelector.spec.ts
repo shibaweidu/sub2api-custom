@@ -9,12 +9,20 @@ const {
   listTemplates,
   accountsList,
   accountsGetById,
+  keysList,
+  getUserGroupRates,
+  qualityPlansList,
+  qualityGroupsGetAll,
   monitorCreate,
   monitorUpdate,
 } = vi.hoisted(() => ({
   listTemplates: vi.fn(),
   accountsList: vi.fn(),
   accountsGetById: vi.fn(),
+  keysList: vi.fn(),
+  getUserGroupRates: vi.fn(),
+  qualityPlansList: vi.fn(),
+  qualityGroupsGetAll: vi.fn(),
   monitorCreate: vi.fn(),
   monitorUpdate: vi.fn(),
 }))
@@ -43,15 +51,17 @@ vi.mock('@/api/admin', () => ({
       list: (...args: unknown[]) => accountsList(...args),
       getById: (...args: unknown[]) => accountsGetById(...args),
     },
+    tests: { listPlans: qualityPlansList },
+    groups: { getAll: qualityGroupsGetAll },
   },
 }))
 
 vi.mock('@/api/keys', () => ({
-  keysAPI: { list: vi.fn() },
+  keysAPI: { list: (...args: unknown[]) => keysList(...args) },
 }))
 
 vi.mock('@/api/groups', () => ({
-  userGroupsAPI: { getUserGroupRates: vi.fn() },
+  userGroupsAPI: { getUserGroupRates: (...args: unknown[]) => getUserGroupRates(...args) },
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -117,7 +127,11 @@ function mountDialog(monitor: ChannelMonitor | null = null) {
         BaseDialog: BaseDialogStub,
         Toggle: true,
         ModelTagInput: true,
-        MonitorKeyPickerDialog: true,
+        MonitorKeyPickerDialog: defineComponent({
+          props: { show: Boolean, keys: { type: Array, default: () => [] } },
+          emits: ['close', 'pick'],
+          template: '<div v-if="show"><button data-testid="monitor-key-picker-pick" @click="$emit(\'pick\', keys[0])">pick</button></div>',
+        }),
         MonitorAdvancedRequestConfig: true,
       },
     },
@@ -166,6 +180,10 @@ describe('MonitorFormDialog linked account selector', () => {
     listTemplates.mockReset().mockResolvedValue({ items: [] })
     accountsList.mockReset().mockResolvedValue({ items: [] })
     accountsGetById.mockReset()
+    keysList.mockReset().mockResolvedValue({ items: [] })
+    getUserGroupRates.mockReset().mockResolvedValue({})
+    qualityPlansList.mockReset().mockResolvedValue([{ group_ids: [8] }])
+    qualityGroupsGetAll.mockReset().mockResolvedValue([{ id: 8, name: 'quality group' }, { id: 9, name: 'other group' }])
     monitorCreate.mockReset().mockResolvedValue({})
     monitorUpdate.mockReset().mockResolvedValue({})
   })
@@ -186,6 +204,73 @@ describe('MonitorFormDialog linked account selector', () => {
       { platform: 'anthropic' },
       { signal: expect.any(AbortSignal) },
     )
+  })
+
+  it('filters probe channels to the primary group of the selected API key', async () => {
+    keysList.mockResolvedValue({ items: [{
+      id: 77,
+      user_id: 1,
+      key: 'sk-test-key',
+      name: 'Anthropic key',
+      group_id: 15,
+      fallback_group_id: null,
+      group: { id: 15, name: 'Anthropic pool', platform: 'anthropic' },
+      status: 'active',
+      expires_at: null,
+    }] })
+    accountsList.mockResolvedValue({ items: [{ id: 4, name: 'group channel', platform: 'anthropic' }] })
+    const wrapper = mountDialog()
+    await flushPromises()
+
+    const useMyKeyButton = wrapper.findAll('button').find((button) =>
+      button.text() === 'admin.channelMonitor.form.useMyKey',
+    )
+    expect(useMyKeyButton).toBeDefined()
+    await useMyKeyButton!.trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="monitor-key-picker-pick"]').trigger('click')
+    await flushPromises()
+
+    expect(accountsList).toHaveBeenCalledWith(
+      1,
+      50,
+      { platform: 'anthropic', group: '15' },
+      { signal: expect.any(AbortSignal) },
+    )
+    expect(wrapper.text()).toContain('admin.channelMonitor.form.probeAccountGroupHint')
+
+    // Replacing the picked key manually removes the inferred group restriction.
+    await wrapper.get('input[type="password"]').setValue('sk-manual-key')
+    await flushPromises()
+    expect(accountsList).toHaveBeenLastCalledWith(
+      1,
+      50,
+      { platform: 'anthropic' },
+      { signal: expect.any(AbortSignal) },
+    )
+    expect(wrapper.text()).not.toContain('admin.channelMonitor.form.probeAccountGroupHint')
+  })
+
+  it('restores default group probing by clearing the linked probe channel', async () => {
+    accountsGetById.mockResolvedValue({ id: 999, name: 'fixed probe channel', platform: 'openai' })
+    const wrapper = mountDialog(makeMonitor({
+      provider: 'openai',
+      check_mode: 'probe',
+      probe_account_id: 999,
+    }))
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="monitor-probe-account-reset"]').text()).toBe(
+      'admin.channelMonitor.form.probeAccountReset',
+    )
+    await wrapper.get('[data-testid="monitor-probe-account-reset"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="monitor-probe-account-reset"]').exists()).toBe(false)
+    await wrapper.get('#channel-monitor-form').trigger('submit')
+    await flushPromises()
+
+    expect(monitorUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ probe_account_id: 0 }))
   })
 
   it('debounced typing hits server-side search and aborts the previous request', async () => {
@@ -372,5 +457,18 @@ describe('MonitorFormDialog linked account selector', () => {
       check_mode: 'probe',
       account_id: null,
     }))
+  })
+
+  it('saves the selected quality check group with the monitor', async () => {
+    const wrapper = mountDialog(makeMonitor())
+    await flushPromises()
+    await wrapper.get('[data-testid="quality-group-select"] button').trigger('click')
+    await nextTick()
+    const dropdown = document.body.querySelector<HTMLElement>('.select-dropdown-portal')
+    expect(dropdown).not.toBeNull()
+    clickOption(dropdown as HTMLElement, 'quality group')
+    await wrapper.get('#channel-monitor-form').trigger('submit')
+    await flushPromises()
+    expect(monitorUpdate).toHaveBeenCalledWith(42, expect.objectContaining({ quality_group_id: 8 }))
   })
 })

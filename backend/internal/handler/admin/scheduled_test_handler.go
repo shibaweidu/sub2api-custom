@@ -143,33 +143,37 @@ func NewScheduledTestHandler(scheduledTestSvc *service.ScheduledTestService) *Sc
 }
 
 type createScheduledTestPlanRequest struct {
-	Name              string                                `json:"name"`
-	SortOrder         *int                                  `json:"sort_order"`
-	GroupIDs          []int64                               `json:"group_ids" binding:"required"`
-	TestDefinitionIDs []int64                               `json:"test_definition_ids" binding:"required"`
-	ModelID           string                                `json:"model_id"`
-	ReasoningEffort   string                                `json:"reasoning_effort"`
-	CronExpression    string                                `json:"cron_expression"`
-	Schedule          *service.ScheduledTestSchedule        `json:"schedule"`
-	Enabled           *bool                                 `json:"enabled"`
-	MaxResults        int                                   `json:"max_results"`
-	AutoRecover       *bool                                 `json:"auto_recover"`
-	Protection        service.ScheduledTestProtectionConfig `json:"protection"`
+	Name               string                                `json:"name"`
+	SortOrder          *int                                  `json:"sort_order"`
+	GroupIDs           []int64                               `json:"group_ids" binding:"required"`
+	AccountIDs         []int64                               `json:"account_ids"`
+	AutoPublishResults *bool                                 `json:"auto_publish_results"`
+	TestDefinitionIDs  []int64                               `json:"test_definition_ids" binding:"required"`
+	ModelID            string                                `json:"model_id"`
+	ReasoningEffort    string                                `json:"reasoning_effort"`
+	CronExpression     string                                `json:"cron_expression"`
+	Schedule           *service.ScheduledTestSchedule        `json:"schedule"`
+	Enabled            *bool                                 `json:"enabled"`
+	MaxResults         int                                   `json:"max_results"`
+	AutoRecover        *bool                                 `json:"auto_recover"`
+	Protection         service.ScheduledTestProtectionConfig `json:"protection"`
 }
 
 type updateScheduledTestPlanRequest struct {
-	Name              *string                                `json:"name"`
-	SortOrder         *int                                   `json:"sort_order"`
-	GroupIDs          json.RawMessage                        `json:"group_ids"`
-	TestDefinitionIDs json.RawMessage                        `json:"test_definition_ids"`
-	ModelID           string                                 `json:"model_id"`
-	ReasoningEffort   json.RawMessage                        `json:"reasoning_effort"`
-	CronExpression    string                                 `json:"cron_expression"`
-	Schedule          json.RawMessage                        `json:"schedule"`
-	Enabled           *bool                                  `json:"enabled"`
-	MaxResults        int                                    `json:"max_results"`
-	AutoRecover       *bool                                  `json:"auto_recover"`
-	Protection        *service.ScheduledTestProtectionConfig `json:"protection"`
+	Name               *string                                `json:"name"`
+	SortOrder          *int                                   `json:"sort_order"`
+	GroupIDs           json.RawMessage                        `json:"group_ids"`
+	AccountIDs         json.RawMessage                        `json:"account_ids"`
+	AutoPublishResults *bool                                  `json:"auto_publish_results"`
+	TestDefinitionIDs  json.RawMessage                        `json:"test_definition_ids"`
+	ModelID            string                                 `json:"model_id"`
+	ReasoningEffort    json.RawMessage                        `json:"reasoning_effort"`
+	CronExpression     string                                 `json:"cron_expression"`
+	Schedule           json.RawMessage                        `json:"schedule"`
+	Enabled            *bool                                  `json:"enabled"`
+	MaxResults         int                                    `json:"max_results"`
+	AutoRecover        *bool                                  `json:"auto_recover"`
+	Protection         *service.ScheduledTestProtectionConfig `json:"protection"`
 }
 
 // ListByAccount GET /admin/accounts/:id/scheduled-test-plans
@@ -221,16 +225,18 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	}
 
 	plan := &service.ScheduledTestPlan{
-		Name:              req.Name,
-		GroupIDs:          req.GroupIDs,
-		TestDefinitionIDs: req.TestDefinitionIDs,
-		ModelID:           req.ModelID,
-		ReasoningEffort:   req.ReasoningEffort,
-		CronExpression:    req.CronExpression,
-		Schedule:          req.Schedule,
-		Enabled:           true,
-		MaxResults:        req.MaxResults,
-		Protection:        req.Protection,
+		Name:               req.Name,
+		GroupIDs:           req.GroupIDs,
+		AccountIDs:         req.AccountIDs,
+		TestDefinitionIDs:  req.TestDefinitionIDs,
+		ModelID:            req.ModelID,
+		ReasoningEffort:    req.ReasoningEffort,
+		CronExpression:     req.CronExpression,
+		Schedule:           req.Schedule,
+		Enabled:            true,
+		AutoPublishResults: true,
+		MaxResults:         req.MaxResults,
+		Protection:         req.Protection,
 	}
 	if req.SortOrder != nil {
 		if *req.SortOrder < 0 {
@@ -241,6 +247,9 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		plan.Enabled = *req.Enabled
+	}
+	if req.AutoPublishResults != nil {
+		plan.AutoPublishResults = *req.AutoPublishResults
 	}
 	if req.AutoRecover != nil {
 		plan.AutoRecover = *req.AutoRecover
@@ -311,6 +320,14 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		}
 		existing.GroupIDs = ids
 	}
+	if len(req.AccountIDs) > 0 {
+		var ids []int64
+		if err := json.Unmarshal(req.AccountIDs, &ids); err != nil || ids == nil {
+			response.BadRequest(c, "account_ids must be an array")
+			return
+		}
+		existing.AccountIDs = ids
+	}
 	if len(req.TestDefinitionIDs) > 0 {
 		var ids []int64
 		if err := json.Unmarshal(req.TestDefinitionIDs, &ids); err != nil || ids == nil {
@@ -336,6 +353,9 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
+	}
+	if req.AutoPublishResults != nil {
+		existing.AutoPublishResults = *req.AutoPublishResults
 	}
 	if req.MaxResults > 0 {
 		existing.MaxResults = req.MaxResults
@@ -407,6 +427,30 @@ func (h *ScheduledTestHandler) DeleteResult(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+func (h *ScheduledTestHandler) SetResultPublished(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "invalid test result id")
+		return
+	}
+	var req struct {
+		Published *bool `json:"published" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Published == nil {
+		response.BadRequest(c, "published is required")
+		return
+	}
+	if err := h.scheduledTestSvc.SetResultPublished(c.Request.Context(), id, *req.Published); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.NotFound(c, "test result not found")
+			return
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"published": *req.Published})
 }
 
 func (h *ScheduledTestHandler) RunNow(c *gin.Context) {

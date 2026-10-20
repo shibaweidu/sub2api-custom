@@ -30,7 +30,8 @@ func (r *scheduledTestResultRepository) listPlanAccountIDs(ctx context.Context, 
  AND (NOT $3 OR (a.schedulable AND a.status IN ('active','quality_paused')))
  AND EXISTS (SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id
              WHERE ag.account_id=a.id AND ag.group_id=ANY($2) AND g.deleted_at IS NULL AND g.status='active')
- ORDER BY a.id`, accountID, pq.Array(plan.GroupIDs), eligibleOnly)
+	 AND (COALESCE(cardinality($4::bigint[]),0)=0 OR a.id=ANY($4::bigint[]))
+	 ORDER BY a.id`, accountID, pq.Array(plan.GroupIDs), eligibleOnly, pq.Array(plan.AccountIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +476,7 @@ func (r *scheduledTestResultRepository) BeginProtectionRun(ctx context.Context, 
 		return err
 	}
 	defer tx.Rollback()
-	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
+	current, err := scanPlan(tx.QueryRowContext(ctx, `SELECT id, name, sort_order, account_id, group_id, test_definition_id, test_type, target_mode, model_id, reasoning_effort, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, test_definition_ids, protection, group_ids, migration_note, schedule_config, account_ids, auto_publish_results FROM scheduled_test_plans WHERE id=$1 FOR NO KEY UPDATE`, plan.ID))
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
+
 // MonitorBodyOverrideMode 自定义请求体处理模式。
 //
 //   - off     使用 adapter 默认 body（忽略 BodyOverride）
@@ -51,8 +52,10 @@ type ChannelMonitor struct {
 
 	// 配额模式（check_mode = quota / quota_probe）：
 	// 关联已有账号复用账号侧用量服务，Endpoint/APIKey 可为空（quota 模式）。
-	CheckMode string // probe（默认）/ quota / quota_probe；空串按 probe 处理
-	AccountID *int64 // 关联账号 ID；账号删除后被 DB 置空（监控保留并报「账号未关联」）
+	CheckMode      string // probe（默认）/ quota / quota_probe；空串按 probe 处理
+	AccountID      *int64 // 关联账号 ID；账号删除后被 DB 置空（监控保留并报「账号未关联」）
+	ProbeAccountID *int64 // 探活模式关联的真实渠道账号；为空时使用监控自身快照配置
+	QualityGroupID *int64 // 可选：关联用户端展示的质量检测分组
 
 	// 请求自定义快照（来自模板拷贝 or 用户手填，运行时直接读取）
 	TemplateID       *int64            // 仅用于 UI 分组 + 一键应用，运行时不用
@@ -100,8 +103,10 @@ type ChannelMonitorCreateParams struct {
 	BodyOverride     map[string]any
 
 	// 配额模式：CheckMode 空串默认 probe；quota/quota_probe 必须关联账号。
-	CheckMode string
-	AccountID *int64
+	CheckMode      string
+	AccountID      *int64
+	ProbeAccountID *int64
+	QualityGroupID *int64
 }
 
 // ChannelMonitorUpdateParams 更新参数（指针字段表示"未提供则不更新"）。
@@ -128,8 +133,10 @@ type ChannelMonitorUpdateParams struct {
 
 	// 配额模式：CheckMode nil = 不更新；AccountID nil = 不更新，
 	// 指向 0 = 清空关联（退回 probe 模式时由 CheckMode 分支兜底）。
-	CheckMode *string
-	AccountID *int64
+	CheckMode      *string
+	AccountID      *int64
+	ProbeAccountID *int64
+	QualityGroupID *int64
 }
 
 // CheckResult 单个模型一次检测的结果。
@@ -150,6 +157,7 @@ type UserMonitorView struct {
 	Name                 string
 	Provider             string
 	GroupName            string
+	QualityGroupID       *int64
 	PrimaryModel         string
 	PrimaryStatus        string
 	PrimaryLatencyMs     *int

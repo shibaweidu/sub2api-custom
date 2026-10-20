@@ -158,6 +158,9 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 	if err := s.validateLinkedAccount(ctx, p.Provider, p.AccountID); err != nil {
 		return nil, err
 	}
+	if err := s.validateProbeAccount(ctx, p.Provider, p.ProbeAccountID); err != nil {
+		return nil, err
+	}
 	checkMode := defaultCheckMode(p.CheckMode)
 	encrypted, err := s.encryptor.Encrypt(p.APIKey)
 	if err != nil {
@@ -182,6 +185,8 @@ func (s *ChannelMonitorService) Create(ctx context.Context, p ChannelMonitorCrea
 		BodyOverride:     p.BodyOverride,
 		CheckMode:        checkMode,
 		AccountID:        cloneInt64Pointer(p.AccountID),
+		ProbeAccountID:   cloneInt64Pointer(p.ProbeAccountID),
+		QualityGroupID:   cloneInt64Pointer(p.QualityGroupID),
 	}
 	if err := s.repo.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("create channel monitor: %w", err)
@@ -249,6 +254,8 @@ func (s *ChannelMonitorService) Duplicate(
 		BodyOverride:         bodyOverride,
 		CheckMode:            defaultCheckMode(source.CheckMode),
 		AccountID:            cloneInt64Pointer(source.AccountID),
+		ProbeAccountID:       cloneInt64Pointer(source.ProbeAccountID),
+		QualityGroupID:       cloneInt64Pointer(source.QualityGroupID),
 		DuplicateOperationID: operationID,
 	}
 	if err := s.repo.Create(ctx, duplicate); err != nil {
@@ -389,7 +396,7 @@ func validateCreateParams(p ChannelMonitorCreateParams) error {
 	usesQuota := monitorCheckModeUsesQuota(checkMode)
 	// probe 分支（含 quota_probe 的探活部分）仍需 endpoint + api_key；
 	// quota 模式 endpoint/api_key 留空，避免要求用户填无意义的占位值。
-	if checkMode != MonitorCheckModeQuota {
+	if checkMode != MonitorCheckModeQuota && p.ProbeAccountID == nil {
 		if err := validateEndpoint(p.Endpoint); err != nil {
 			return err
 		}
@@ -426,6 +433,26 @@ func (s *ChannelMonitorService) validateLinkedAccount(ctx context.Context, provi
 	return monitorAccountQuotaCapability(account)
 }
 
+// validateProbeAccount verifies that a selected channel exists and belongs to
+// the same provider. Probe accounts are independent from quota accounts and
+// are allowed for all probe-capable providers.
+func (s *ChannelMonitorService) validateProbeAccount(ctx context.Context, provider string, accountID *int64) error {
+	if accountID == nil || *accountID <= 0 {
+		return nil
+	}
+	if s.quotaFetcher == nil {
+		return ErrChannelMonitorAccountRequired
+	}
+	account, err := s.quotaFetcher.LoadAccount(ctx, *accountID)
+	if err != nil || account == nil {
+		return ErrChannelMonitorAccountRequired
+	}
+	if account.Platform != provider {
+		return ErrChannelMonitorProviderIncompatible
+	}
+	return nil
+}
+
 // Update 更新监控。APIKey 字段：nil 或空字符串 = 不修改；非空 = 加密后覆盖。
 func (s *ChannelMonitorService) Update(ctx context.Context, id int64, p ChannelMonitorUpdateParams) (*ChannelMonitor, error) {
 	existing, err := s.repo.GetByID(ctx, id)
@@ -443,10 +470,13 @@ func (s *ChannelMonitorService) Update(ctx context.Context, id int64, p ChannelM
 	if err := s.validateProbeAPIKey(existing, newPlainAPIKey); err != nil {
 		return nil, err
 	}
-	if p.Provider != nil || p.CheckMode != nil || p.AccountID != nil {
+	if p.Provider != nil || p.CheckMode != nil || p.AccountID != nil || p.ProbeAccountID != nil {
 		if err := s.revalidateLinkedAccount(ctx, existing); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.validateProbeAccount(ctx, existing.Provider, existing.ProbeAccountID); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.Update(ctx, existing); err != nil {
@@ -476,7 +506,7 @@ func validateMonitorModeFields(m *ChannelMonitor) error {
 	if monitorCheckModeUsesQuota(checkMode) && m.AccountID == nil {
 		return ErrChannelMonitorAccountRequired
 	}
-	if checkMode != MonitorCheckModeQuota && strings.TrimSpace(m.Endpoint) == "" {
+	if checkMode != MonitorCheckModeQuota && m.ProbeAccountID == nil && strings.TrimSpace(m.Endpoint) == "" {
 		return ErrChannelMonitorInvalidEndpoint
 	}
 	return nil
@@ -487,6 +517,9 @@ func validateMonitorModeFields(m *ChannelMonitor) error {
 // 密文损坏的情况交给既有 APIKeyDecryptFailed 链路（Get/RunCheck 会显式报错）。
 func (s *ChannelMonitorService) validateProbeAPIKey(m *ChannelMonitor, newPlainKey string) error {
 	if defaultCheckMode(m.CheckMode) == MonitorCheckModeQuota {
+		return nil
+	}
+	if m.ProbeAccountID != nil {
 		return nil
 	}
 	if strings.TrimSpace(newPlainKey) != "" {
@@ -615,7 +648,7 @@ func (s *ChannelMonitorService) RunCheck(ctx context.Context, id int64) ([]*Chec
 		return nil, err
 	}
 	checkMode := defaultCheckMode(m.CheckMode)
-	if checkMode != MonitorCheckModeQuota && m.APIKeyDecryptFailed {
+	if checkMode != MonitorCheckModeQuota && m.ProbeAccountID == nil && m.APIKeyDecryptFailed {
 		return nil, ErrChannelMonitorAPIKeyDecryptFailed
 	}
 
@@ -698,9 +731,16 @@ func (s *ChannelMonitorService) persistCheckResults(ctx context.Context, m *Chan
 func (s *ChannelMonitorService) runChecksConcurrent(ctx context.Context, m *ChannelMonitor) []*CheckResult {
 	models := append([]string{m.PrimaryModel}, m.ExtraModels...)
 	results := make([]*CheckResult, len(models))
+	target, targetErr := s.resolveProbeTarget(ctx, m)
+	if targetErr != nil {
+		for i, model := range models {
+			results[i] = &CheckResult{Model: model, Status: MonitorStatusError, Message: targetErr.Error(), CheckedAt: time.Now()}
+		}
+		return results
+	}
 
 	// ping 共享一次，所有模型记录同一个 ping 延迟。
-	pingMs := pingEndpointOrigin(ctx, m.Endpoint)
+	pingMs := pingEndpointOrigin(ctx, target.endpoint)
 
 	// 所有模型共用同一份 CheckOptions（来自监控的快照字段）。
 	opts := &CheckOptions{
@@ -715,7 +755,12 @@ func (s *ChannelMonitorService) runChecksConcurrent(ctx context.Context, m *Chan
 	for i, model := range models {
 		i, model := i, model
 		eg.Go(func() error {
-			r := runCheckForModel(ctx, m.Provider, m.Endpoint, m.APIKey, model, opts)
+			requestModel := model
+			if target.account != nil {
+				requestModel, _ = target.account.ResolveMappedModel(model)
+			}
+			r := runCheckForModel(ctx, m.Provider, target.endpoint, target.apiKey, requestModel, opts)
+			r.Model = model
 			r.PingLatencyMs = pingMs
 			mu.Lock()
 			results[i] = r
@@ -725,6 +770,69 @@ func (s *ChannelMonitorService) runChecksConcurrent(ctx context.Context, m *Chan
 	}
 	_ = eg.Wait()
 	return results
+}
+
+type channelMonitorProbeTarget struct {
+	endpoint string
+	apiKey   string
+	account  *Account
+}
+
+// resolveProbeTarget turns a selected real channel into the same endpoint and
+// credential pair used by the upstream gateway. The monitor's saved snapshot
+// remains the fallback for backwards compatibility.
+func (s *ChannelMonitorService) resolveProbeTarget(ctx context.Context, m *ChannelMonitor) (channelMonitorProbeTarget, error) {
+	target := channelMonitorProbeTarget{endpoint: m.Endpoint, apiKey: m.APIKey}
+	if m.ProbeAccountID == nil {
+		return target, nil
+	}
+	if s.quotaFetcher == nil {
+		return target, fmt.Errorf("probe channel is not available")
+	}
+	account, err := s.quotaFetcher.LoadAccount(ctx, *m.ProbeAccountID)
+	if err != nil || account == nil {
+		return target, fmt.Errorf("probe channel is unavailable")
+	}
+	if account.Platform != m.Provider {
+		return target, ErrChannelMonitorProviderIncompatible
+	}
+	target.account = account
+	switch m.Provider {
+	case MonitorProviderAnthropic:
+		target.endpoint = account.GetBaseURL()
+		target.apiKey = account.GetCredential("api_key")
+		if target.apiKey == "" {
+			target.apiKey = account.GetCredential("access_token")
+		}
+	case MonitorProviderGemini:
+		target.endpoint = account.GetGeminiBaseURL("https://generativelanguage.googleapis.com")
+		target.apiKey = account.GetCredential("api_key")
+		if target.apiKey == "" {
+			target.apiKey = account.GetCredential("access_token")
+		}
+	case MonitorProviderGrok:
+		target.endpoint = account.GetGrokBaseURL()
+		target.apiKey = account.GetGrokAccessToken()
+		if target.apiKey == "" {
+			target.apiKey = account.GetCredential("api_key")
+		}
+	case MonitorProviderOpenAI, MonitorProviderKimi, MonitorProviderZhipu,
+		MonitorProviderDeepseek, MonitorProviderMiniMax, MonitorProviderOpenCodeGo:
+		target.endpoint = account.GetOpenAIBaseURL()
+		target.apiKey = account.GetOpenAIProtocolAPIKey()
+		if target.apiKey == "" {
+			target.apiKey = account.GetCredential("access_token")
+		}
+		if target.apiKey == "" {
+			target.apiKey = account.GetCredential("id_token")
+		}
+	default:
+		return target, fmt.Errorf("probe channel provider is not supported")
+	}
+	if strings.TrimSpace(target.endpoint) == "" || strings.TrimSpace(target.apiKey) == "" {
+		return target, fmt.Errorf("probe channel credentials are unavailable")
+	}
+	return target, nil
 }
 
 // ---------- 调度器协作 ----------
@@ -913,6 +1021,22 @@ func applyMonitorUpdate(existing *ChannelMonitor, p ChannelMonitorUpdateParams) 
 			existing.AccountID = &id
 		} else {
 			existing.AccountID = nil // 0 = 清空关联
+		}
+	}
+	if p.ProbeAccountID != nil {
+		if *p.ProbeAccountID > 0 {
+			id := *p.ProbeAccountID
+			existing.ProbeAccountID = &id
+		} else {
+			existing.ProbeAccountID = nil
+		}
+	}
+	if p.QualityGroupID != nil {
+		if *p.QualityGroupID > 0 {
+			id := *p.QualityGroupID
+			existing.QualityGroupID = &id
+		} else {
+			existing.QualityGroupID = nil
 		}
 	}
 	if p.Endpoint != nil {

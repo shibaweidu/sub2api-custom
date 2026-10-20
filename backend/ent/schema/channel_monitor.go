@@ -52,6 +52,14 @@ func (ChannelMonitor) Fields() []ent.Field {
 		field.Int64("account_id").
 			Optional().
 			Nillable(),
+		// probe_account_id: 探活模式使用的真实渠道账号。与 account_id（配额数据源）分离，
+		// 账号删除时由数据库置空，监控保留并在探测结果中报告不可用。
+		field.Int64("probe_account_id").
+			Optional().
+			Nillable(),
+		field.Int64("quality_group_id").
+			Optional().
+			Nillable(),
 		field.String("api_mode").
 			Default("chat_completions").
 			MaxLen(32).
@@ -133,5 +141,7 @@ func (ChannelMonitor) Indexes() []ent.Index {
 		index.Fields("group_name"),
 		index.Fields("template_id"),
 		index.Fields("account_id"),
+		index.Fields("probe_account_id"),
+		index.Fields("quality_group_id"),
 	}
 }

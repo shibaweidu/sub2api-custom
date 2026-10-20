@@ -519,6 +519,9 @@ export default {
 
   // Shared keys for channel monitor (admin + user views)
   monitorCommon: {
+    qualityChecks: 'Quality checks',
+    viewQualityChecks: 'View all',
+    qualityChecksEmpty: 'No published results',
     status: {
       operational: 'Operational',
       degraded: 'Degraded',

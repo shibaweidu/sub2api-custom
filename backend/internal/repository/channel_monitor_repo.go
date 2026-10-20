@@ -61,6 +61,12 @@ func (r *channelMonitorRepository) Create(ctx context.Context, m *service.Channe
 	if m.AccountID != nil {
 		builder = builder.SetAccountID(*m.AccountID)
 	}
+	if m.ProbeAccountID != nil {
+		builder = builder.SetProbeAccountID(*m.ProbeAccountID)
+	}
+	if m.QualityGroupID != nil {
+		builder = builder.SetQualityGroupID(*m.QualityGroupID)
+	}
 	if m.BodyOverride != nil {
 		builder = builder.SetBodyOverride(m.BodyOverride)
 	}
@@ -135,6 +141,16 @@ func (r *channelMonitorRepository) Update(ctx context.Context, m *service.Channe
 		updater = updater.SetAccountID(*m.AccountID)
 	} else {
 		updater = updater.ClearAccountID()
+	}
+	if m.ProbeAccountID != nil {
+		updater = updater.SetProbeAccountID(*m.ProbeAccountID)
+	} else {
+		updater = updater.ClearProbeAccountID()
+	}
+	if m.QualityGroupID != nil {
+		updater = updater.SetQualityGroupID(*m.QualityGroupID)
+	} else {
+		updater = updater.ClearQualityGroupID()
 	}
 	if m.BodyOverride != nil {
 		updater = updater.SetBodyOverride(m.BodyOverride)
@@ -791,6 +807,7 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 		BodyOverride:         row.BodyOverride,
 		CheckMode:            defaultCheckModeRepo(row.CheckMode),
 		DuplicateOperationID: duplicateOperationID,
+		QualityGroupID:       row.QualityGroupID,
 	}
 	if row.TemplateID != nil {
 		id := *row.TemplateID
@@ -799,6 +816,14 @@ func entToServiceMonitor(row *dbent.ChannelMonitor) *service.ChannelMonitor {
 	if row.AccountID != nil {
 		id := *row.AccountID
 		out.AccountID = &id
+	}
+	if row.ProbeAccountID != nil {
+		id := *row.ProbeAccountID
+		out.ProbeAccountID = &id
+	}
+	if row.QualityGroupID != nil {
+		id := *row.QualityGroupID
+		out.QualityGroupID = &id
 	}
 	return out
 }

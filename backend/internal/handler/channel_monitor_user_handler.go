@@ -56,6 +56,7 @@ type channelMonitorUserListItem struct {
 	Name                 string                               `json:"name"`
 	Provider             string                               `json:"provider"`
 	GroupName            string                               `json:"group_name"`
+	QualityGroupID       *int64                               `json:"quality_group_id,omitempty"`
 	PrimaryModel         string                               `json:"primary_model"`
 	PrimaryStatus        string                               `json:"primary_status"`
 	PrimaryLatencyMs     *int                                 `json:"primary_latency_ms"`
@@ -118,6 +119,7 @@ func userMonitorViewToItem(v *service.UserMonitorView, includeQuota bool) channe
 		Name:                 v.Name,
 		Provider:             v.Provider,
 		GroupName:            v.GroupName,
+		QualityGroupID:       v.QualityGroupID,
 		PrimaryModel:         v.PrimaryModel,
 		PrimaryStatus:        v.PrimaryStatus,
 		PrimaryLatencyMs:     v.PrimaryLatencyMs,

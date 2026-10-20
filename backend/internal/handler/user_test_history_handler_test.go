@@ -18,9 +18,15 @@ import (
 type userTestHistoryRepo struct {
 	service.ScheduledTestResultRepository
 	userID, resultID, beforeID int64
+	groupID                    int64
 	limit                      int
 	rows                       []*service.ScheduledTestResult
 	err                        error
+}
+
+func (r *userTestHistoryRepo) ListVisibleHistoryForGroup(_ context.Context, userID, groupID, resultID, beforeID int64, limit int) ([]*service.ScheduledTestResult, error) {
+	r.userID, r.groupID, r.resultID, r.beforeID, r.limit = userID, groupID, resultID, beforeID, limit
+	return r.rows, r.err
 }
 
 func (r *userTestHistoryRepo) ListVisibleHistory(_ context.Context, userID, resultID, beforeID int64, limit int) ([]*service.ScheduledTestResult, error) {
@@ -66,6 +72,7 @@ func TestUserTestHistoryValidationAndPagination(t *testing.T) {
 				require.Equal(t, int64(5), *page.NextBeforeID)
 				require.Equal(t, 29.0, *page.Items[0].OutputNumeric)
 				require.Equal(t, int64(42), repo.userID)
+				require.Equal(t, int64(999), repo.groupID)
 				require.Equal(t, int64(9), repo.resultID)
 				require.Equal(t, int64(7), repo.beforeID)
 				require.Equal(t, 3, repo.limit, "fetch one extra result to determine whether another page exists")

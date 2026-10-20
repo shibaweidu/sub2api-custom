@@ -80,6 +80,16 @@ func AccountID(v int64) predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldEQ(FieldAccountID, v))
 }
 
+// ProbeAccountID applies equality check predicate on the "probe_account_id" field. It's identical to ProbeAccountIDEQ.
+func ProbeAccountID(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldProbeAccountID, v))
+}
+
+// QualityGroupID applies equality check predicate on the "quality_group_id" field. It's identical to QualityGroupIDEQ.
+func QualityGroupID(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldQualityGroupID, v))
+}
+
 // APIMode applies equality check predicate on the "api_mode" field. It's identical to APIModeEQ.
 func APIMode(v string) predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldEQ(FieldAPIMode, v))
@@ -418,6 +428,106 @@ func AccountIDIsNil() predicate.ChannelMonitor {
 // AccountIDNotNil applies the NotNil predicate on the "account_id" field.
 func AccountIDNotNil() predicate.ChannelMonitor {
 	return predicate.ChannelMonitor(sql.FieldNotNull(FieldAccountID))
+}
+
+// ProbeAccountIDEQ applies the EQ predicate on the "probe_account_id" field.
+func ProbeAccountIDEQ(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDNEQ applies the NEQ predicate on the "probe_account_id" field.
+func ProbeAccountIDNEQ(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNEQ(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDIn applies the In predicate on the "probe_account_id" field.
+func ProbeAccountIDIn(vs ...int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldIn(FieldProbeAccountID, vs...))
+}
+
+// ProbeAccountIDNotIn applies the NotIn predicate on the "probe_account_id" field.
+func ProbeAccountIDNotIn(vs ...int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNotIn(FieldProbeAccountID, vs...))
+}
+
+// ProbeAccountIDGT applies the GT predicate on the "probe_account_id" field.
+func ProbeAccountIDGT(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldGT(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDGTE applies the GTE predicate on the "probe_account_id" field.
+func ProbeAccountIDGTE(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldGTE(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDLT applies the LT predicate on the "probe_account_id" field.
+func ProbeAccountIDLT(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldLT(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDLTE applies the LTE predicate on the "probe_account_id" field.
+func ProbeAccountIDLTE(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldLTE(FieldProbeAccountID, v))
+}
+
+// ProbeAccountIDIsNil applies the IsNil predicate on the "probe_account_id" field.
+func ProbeAccountIDIsNil() predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldIsNull(FieldProbeAccountID))
+}
+
+// ProbeAccountIDNotNil applies the NotNil predicate on the "probe_account_id" field.
+func ProbeAccountIDNotNil() predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNotNull(FieldProbeAccountID))
+}
+
+// QualityGroupIDEQ applies the EQ predicate on the "quality_group_id" field.
+func QualityGroupIDEQ(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldEQ(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDNEQ applies the NEQ predicate on the "quality_group_id" field.
+func QualityGroupIDNEQ(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNEQ(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDIn applies the In predicate on the "quality_group_id" field.
+func QualityGroupIDIn(vs ...int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldIn(FieldQualityGroupID, vs...))
+}
+
+// QualityGroupIDNotIn applies the NotIn predicate on the "quality_group_id" field.
+func QualityGroupIDNotIn(vs ...int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNotIn(FieldQualityGroupID, vs...))
+}
+
+// QualityGroupIDGT applies the GT predicate on the "quality_group_id" field.
+func QualityGroupIDGT(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldGT(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDGTE applies the GTE predicate on the "quality_group_id" field.
+func QualityGroupIDGTE(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldGTE(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDLT applies the LT predicate on the "quality_group_id" field.
+func QualityGroupIDLT(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldLT(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDLTE applies the LTE predicate on the "quality_group_id" field.
+func QualityGroupIDLTE(v int64) predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldLTE(FieldQualityGroupID, v))
+}
+
+// QualityGroupIDIsNil applies the IsNil predicate on the "quality_group_id" field.
+func QualityGroupIDIsNil() predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldIsNull(FieldQualityGroupID))
+}
+
+// QualityGroupIDNotNil applies the NotNil predicate on the "quality_group_id" field.
+func QualityGroupIDNotNil() predicate.ChannelMonitor {
+	return predicate.ChannelMonitor(sql.FieldNotNull(FieldQualityGroupID))
 }
 
 // APIModeEQ applies the EQ predicate on the "api_mode" field.

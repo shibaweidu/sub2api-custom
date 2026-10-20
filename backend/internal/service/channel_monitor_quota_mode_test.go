@@ -590,6 +590,17 @@ func TestApplyMonitorUpdate_ProviderOnlyRevalidatesCheckMode(t *testing.T) {
 	require.NoError(t, applyMonitorUpdate(legacy, ChannelMonitorUpdateParams{Name: &newName}))
 }
 
+func TestApplyMonitorUpdateQualityGroupAssociation(t *testing.T) {
+	existing := &ChannelMonitor{Provider: MonitorProviderKimi, APIMode: MonitorAPIModeChatCompletions, Endpoint: "https://api.kimi.com", PrimaryModel: "kimi-k2", CheckMode: MonitorCheckModeProbe}
+	selectedID := int64(20)
+	require.NoError(t, applyMonitorUpdate(existing, ChannelMonitorUpdateParams{QualityGroupID: &selectedID}))
+	require.NotNil(t, existing.QualityGroupID)
+	require.Equal(t, int64(20), *existing.QualityGroupID)
+	clearID := int64(0)
+	require.NoError(t, applyMonitorUpdate(existing, ChannelMonitorUpdateParams{QualityGroupID: &clearID}))
+	require.Nil(t, existing.QualityGroupID)
+}
+
 // --- quota → probe 切换的 key 管控（validateProbeAPIKey） ---
 
 func TestValidateProbeAPIKey_QuotaToProbeRequiresFreshKey(t *testing.T) {

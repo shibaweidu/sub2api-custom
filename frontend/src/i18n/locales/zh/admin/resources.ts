@@ -1,7 +1,17 @@
 export default {
     tests: {
       strategyGroups: '策略分组',
-      strategyGroupsHint: '选择 1–100 个同平台的启用分组，检测这些分组内所有可调度账号。下方顺序同时用于用户端分组展示，可上下调整。',
+      strategyGroupsHint: '选择 1–100 个同平台的启用分组。下方顺序同时用于用户端分组展示，可上下调整。',
+      strategyAccounts: '检测渠道',
+      strategyAccountsHint: '默认检测所选分组内全部可调度账号；勾选后仅检测选中的账号，未选择的渠道不会运行。',
+      allStrategyAccounts: '恢复为检测所选分组内全部账号',
+      autoPublishResults: '检测完成后立即展示到用户端',
+      published: '已展示',
+      unpublished: '未展示',
+      publishResult: '展示到用户端',
+      unpublishResult: '从用户端撤下',
+      resultPublished: '检测结果已展示',
+      resultUnpublished: '检测结果已撤下',
       strategyTarget: '所选分组内所有账号',
       moveGroupUp: '分组上移',
       moveGroupDown: '分组下移',
