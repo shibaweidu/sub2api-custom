@@ -2554,6 +2554,8 @@ export interface TestType {
   key: string
   description?: string | null
   output_kind: 'html' | 'number' | 'text' | 'statistics' | 'model_check' | string
+  /** 0 keeps the default budget for this protocol. */
+  max_output_tokens?: number
   prompt: string
   enabled: boolean
   /** Controls the order of detection types in each account's quality results. */
@@ -2579,6 +2581,7 @@ export interface TestPlan {
   group_ids: number[]
   account_ids?: number[]
   auto_publish_results?: boolean
+  excluded_account_ids?: number[]
   migration_note?: string
   name?: string
   /** Controls the display order of this strategy. */
@@ -2649,6 +2652,8 @@ export interface TestProtectionConfig {
   enabled: boolean
   mode?: 'per_test' | 'combined' | 'all_pass'
   pass_group_ids?: number[]
+  on_pass?: TestOutcomeAction
+  on_fail?: TestOutcomeAction
   rules: TestProtectionRule[]
   combinations?: TestCombinationRule[]
 }
@@ -2731,6 +2736,9 @@ export interface TestProtectionDecision {
 }
 
 export interface TestResult {
+  test_key?: string
+  /** Saved quality verdict; transport success does not imply a pass. */
+  quality_verdict?: 'pass' | 'fail' | 'pending' | ''
   execution_info?: TestExecutionInfo | null
   published?: boolean
   /** Current account status and scheduling switch; absent for account-free results. */
@@ -2779,6 +2787,8 @@ export interface CreateTestTypeRequest {
   key: string
   description?: string
   output_kind: string
+  /** 0 keeps the default budget for this protocol. */
+  max_output_tokens?: number
   prompt: string
   enabled?: boolean
   sort_order?: number
@@ -2792,6 +2802,7 @@ export interface CreateTestPlanRequest {
   group_ids: number[]
   account_ids?: number[]
   auto_publish_results?: boolean
+  excluded_account_ids?: number[]
   test_definition_ids: number[]
   model_id: string
   reasoning_effort?: string | null

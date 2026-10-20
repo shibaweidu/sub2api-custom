@@ -24,6 +24,7 @@ INSERT INTO account_groups(account_id,group_id) VALUES (90,8),(91,8),(92,8),(93,
 			Name: name, GroupIDs: []int64{groupID}, GroupID: &groupID,
 			TestDefinitionID: &candyID, TestDefinitionIDs: []int64{candyID, htmlID},
 			TargetMode: "all_accounts", ModelID: name, CronExpression: "0 * * * *", MaxResults: 10,
+			AutoPublishResults: true,
 		})
 		require.NoError(t, err)
 		return p
@@ -77,20 +78,21 @@ INSERT INTO account_groups(account_id,group_id) VALUES (90,8),(91,8),(92,8),(93,
 	}
 	assertVisible(append(previousIDs, other[0].ID)...)
 
-	// A new snapshot replaces the entire previous round, including accounts
-	// and test types that are no longer targeted. Completion times may differ.
+	// A new round keeps the previous successful previews until replacements finish.
 	one := noon.Add(time.Hour)
 	current, err := results.BeginRun(ctx, plan, "one-pm", []*service.ScheduledTestResult{
 		input(plan, 90, candyID, one), input(plan, 90, htmlID, one.Add(time.Minute)),
 		input(plan, 91, candyID, one), input(plan, 92, candyID, one),
 	})
 	require.NoError(t, err)
-	assertVisible(other[0].ID)
+	assertVisible(append(previousIDs, other[0].ID)...)
 	finish(current[0], "success")
 	finish(current[1], "passed")
 	finish(current[2], "failed")
 	finish(current[3], "running")
-	assertVisible(current[0].ID, current[1].ID, current[2].ID, other[0].ID)
+	want := append([]int64{current[0].ID, current[1].ID}, previousIDs[2:]...)
+	want = append(want, other[0].ID)
+	assertVisible(want...)
 
 	// Failed and queued accounts still exist in the administrator's snapshot.
 	admin, err := results.ListByPlanID(ctx, plan.ID, 1)
@@ -115,23 +117,25 @@ INSERT INTO account_groups(account_id,group_id) VALUES (90,8),(91,8),(92,8),(93,
 		require.Contains(t, ids, old.ID, "old successes remain accessible through history")
 	}
 
-	// Retrying the current failed row does not reveal its previous success.
+	// Retrying a failed row keeps its previous successful preview.
 	current[2].StartedAt = one.Add(5 * time.Minute)
 	finish(current[2], "running")
-	assertVisible(current[0].ID, current[1].ID, other[0].ID)
+	assertVisible(want...)
 	finish(current[2], "success")
-	assertVisible(current[0].ID, current[1].ID, current[2].ID, other[0].ID)
+	want[2] = current[2].ID
+	assertVisible(want...)
 
-	// Even a later manual update to an old run cannot replace the current run.
+	// A successful manual retry becomes the newest result for its series.
 	previous[2].StartedAt = one.Add(10 * time.Minute)
 	finish(previous[2], "success")
-	assertVisible(current[0].ID, current[1].ID, current[2].ID, other[0].ID)
+	want[2] = previous[2].ID
+	assertVisible(want...)
 
 	// Failed work stays private and the previous successful work remains visible.
 	last, err := results.BeginRun(ctx, plan, "two-pm", []*service.ScheduledTestResult{input(plan, 90, candyID, noon.Add(2*time.Hour))})
 	require.NoError(t, err)
 	finish(last[0], "failed")
-	assertVisible(current[2].ID, other[0].ID)
+	assertVisible(want...)
 	var eligible int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE id IN (90,91,92,93) AND status='active' AND schedulable`).Scan(&eligible))
 	require.Equal(t, 4, eligible, "listing results does not modify account state or scheduling")

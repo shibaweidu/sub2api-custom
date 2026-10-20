@@ -50,6 +50,7 @@ UPDATE scheduled_test_plans SET sort_order=1000`)
 				return "all_accounts"
 			}(), Status: "success", OutputKind: "number", ResponseText: "21",
 			ModelID: plan.ModelID, StartedAt: started, FinishedAt: started,
+			Published: true,
 		})
 		require.NoError(t, err)
 		return result

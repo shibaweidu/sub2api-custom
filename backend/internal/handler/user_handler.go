@@ -92,6 +92,8 @@ func (h *UserHandler) ListTestResults(c *gin.Context) {
 		} else {
 			rows, err = h.scheduledTestSvc.ListVisibleResultsForGroup(c.Request.Context(), subject.UserID, groupID)
 		}
+	} else if c.Query("group_view") == "all" {
+		rows, err = h.scheduledTestSvc.ListVisibleGroupResults(c.Request.Context(), subject.UserID)
 	} else {
 		limit := 3
 		if n, err := strconv.Atoi(c.Query("limit")); err == nil && n > 0 && n <= 3 {

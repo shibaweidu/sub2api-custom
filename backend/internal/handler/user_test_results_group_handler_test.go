@@ -39,9 +39,9 @@ func TestListTestResultsForGroupReturnsAllRowsWithOpaqueSetKeys(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accountA, accountB := int64(321), int64(654)
 	repo := &userTestGroupResultsRepo{allRows: []*service.ScheduledTestResult{
-		{ID: 10, AccountID: &accountA, TargetMode: "all_accounts", GroupID: ptrInt64(8), Status: "success", OutputKind: "html", StartedAt: time.Now()},
-		{ID: 11, AccountID: &accountA, TargetMode: "all_accounts", GroupID: ptrInt64(8), Status: "success", OutputKind: "html", StartedAt: time.Now()},
-		{ID: 12, AccountID: &accountB, TargetMode: "all_accounts", GroupID: ptrInt64(8), Status: "failed", OutputKind: "html", StartedAt: time.Now()},
+		{ID: 10, AccountID: &accountA, TargetMode: "all_accounts", GroupID: userTestGroupID(8), Status: "success", OutputKind: "html", StartedAt: time.Now()},
+		{ID: 11, AccountID: &accountA, TargetMode: "all_accounts", GroupID: userTestGroupID(8), Status: "success", OutputKind: "html", StartedAt: time.Now()},
+		{ID: 12, AccountID: &accountB, TargetMode: "all_accounts", GroupID: userTestGroupID(8), Status: "failed", OutputKind: "html", StartedAt: time.Now()},
 	}}
 	h := &UserHandler{scheduledTestSvc: service.NewScheduledTestService(nil, repo)}
 	router := gin.New()
@@ -80,4 +80,4 @@ func TestListTestResultsForGroupLimitUsesCompactLatestQuery(t *testing.T) {
 	require.Equal(t, 4, repo.recentCall.limit)
 }
 
-func ptrInt64(value int64) *int64 { return &value }
+func userTestGroupID(value int64) *int64 { return &value }

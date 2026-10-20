@@ -35,6 +35,7 @@ func testScheduledTestPublicVotingSwitch(t *testing.T, ctx context.Context, db *
 	result, err := repo.Create(ctx, &service.ScheduledTestResult{
 		RunID: "test-round", PlanID: plan.ID, TestDefinitionID: &definitionID, GroupID: &groupID, AccountID: &accountID,
 		TargetMode: plan.TargetMode, ModelID: plan.ModelID, Status: "running", OutputKind: "html",
+		Published: true,
 		StartedAt: started, FinishedAt: started,
 	})
 	require.NoError(t, err)
@@ -110,7 +111,8 @@ func testScheduledTestGenericPublicVotes(t *testing.T, ctx context.Context, db *
 	}
 	plan, err := plans.Create(ctx, &service.ScheduledTestPlan{
 		Name: "Public review policy", SortOrder: 1, GroupIDs: []int64{10, 8}, GroupID: &upperGroupID, TargetMode: "all_accounts",
-		TestDefinitionID: &candyID, TestDefinitionIDs: []int64{candyID, pelicanID},
+		AutoPublishResults: true,
+		TestDefinitionID:   &candyID, TestDefinitionIDs: []int64{candyID, pelicanID},
 		ModelID: "model", CronExpression: "0 * * * *", Enabled: true, MaxResults: 20,
 		Protection: service.ScheduledTestProtectionConfig{Enabled: true, Rules: rules},
 	})

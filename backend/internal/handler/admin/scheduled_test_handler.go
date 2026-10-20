@@ -25,9 +25,10 @@ type testDefinitionRequest struct {
 	Prompt      string  `json:"prompt"`
 	OutputKind  string  `json:"output_kind"`
 	// Kind is accepted as a frontend-friendly alias for output_kind.
-	Kind      string `json:"kind"`
-	Enabled   *bool  `json:"enabled"`
-	SortOrder *int   `json:"sort_order"`
+	Kind            string `json:"kind"`
+	Enabled         *bool  `json:"enabled"`
+	SortOrder       *int   `json:"sort_order"`
+	MaxOutputTokens *int   `json:"max_output_tokens"`
 }
 
 func (h *ScheduledTestHandler) ListDefinitions(c *gin.Context) {
@@ -55,6 +56,9 @@ func (h *ScheduledTestHandler) CreateDefinition(c *gin.Context) {
 		description = *req.Description
 	}
 	d := &service.ScheduledTestDefinition{Key: req.Key, Name: req.Name, Description: description, Prompt: req.Prompt, OutputKind: outputKind, Enabled: true}
+	if req.MaxOutputTokens != nil {
+		d.MaxOutputTokens = *req.MaxOutputTokens
+	}
 	if req.SortOrder != nil {
 		if *req.SortOrder < 0 {
 			response.BadRequest(c, "sort_order must be non-negative")
@@ -102,6 +106,9 @@ func (h *ScheduledTestHandler) UpdateDefinition(c *gin.Context) {
 	if req.Prompt != "" {
 		d.Prompt = req.Prompt
 	}
+	if req.MaxOutputTokens != nil {
+		d.MaxOutputTokens = *req.MaxOutputTokens
+	}
 	if req.OutputKind != "" {
 		d.OutputKind = req.OutputKind
 	} else if req.Kind != "" {
@@ -148,6 +155,7 @@ type createScheduledTestPlanRequest struct {
 	GroupIDs           []int64                               `json:"group_ids" binding:"required"`
 	AccountIDs         []int64                               `json:"account_ids"`
 	AutoPublishResults *bool                                 `json:"auto_publish_results"`
+	ExcludedAccountIDs []int64                               `json:"excluded_account_ids"`
 	TestDefinitionIDs  []int64                               `json:"test_definition_ids" binding:"required"`
 	ModelID            string                                `json:"model_id"`
 	ReasoningEffort    string                                `json:"reasoning_effort"`
@@ -165,6 +173,7 @@ type updateScheduledTestPlanRequest struct {
 	GroupIDs           json.RawMessage                        `json:"group_ids"`
 	AccountIDs         json.RawMessage                        `json:"account_ids"`
 	AutoPublishResults *bool                                  `json:"auto_publish_results"`
+	ExcludedAccountIDs json.RawMessage                        `json:"excluded_account_ids"`
 	TestDefinitionIDs  json.RawMessage                        `json:"test_definition_ids"`
 	ModelID            string                                 `json:"model_id"`
 	ReasoningEffort    json.RawMessage                        `json:"reasoning_effort"`
@@ -228,6 +237,7 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 		Name:               req.Name,
 		GroupIDs:           req.GroupIDs,
 		AccountIDs:         req.AccountIDs,
+		ExcludedAccountIDs: req.ExcludedAccountIDs,
 		TestDefinitionIDs:  req.TestDefinitionIDs,
 		ModelID:            req.ModelID,
 		ReasoningEffort:    req.ReasoningEffort,
@@ -327,6 +337,14 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 			return
 		}
 		existing.AccountIDs = ids
+	}
+	if len(req.ExcludedAccountIDs) > 0 {
+		var ids []int64
+		if err := json.Unmarshal(req.ExcludedAccountIDs, &ids); err != nil || ids == nil {
+			response.BadRequest(c, "excluded_account_ids must be an array")
+			return
+		}
+		existing.ExcludedAccountIDs = ids
 	}
 	if len(req.TestDefinitionIDs) > 0 {
 		var ids []int64
